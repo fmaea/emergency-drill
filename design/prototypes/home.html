@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>案例库 - 环应急战</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700&display=swap" rel="stylesheet">
+    <style> body { font-family: 'Noto Sans SC', sans-serif; } </style>
+</head>
+<body class="bg-gray-900 text-gray-200">
+    <div class="min-h-screen flex flex-col">
+        <header class="bg-gray-800/50 backdrop-blur-sm shadow-lg border-b border-gray-700">
+            <div class="container mx-auto px-6 py-4 flex justify-between items-center">
+                <div class="flex items-center space-x-3">
+                    <i class="fa-solid fa-shield-halved text-3xl text-cyan-400"></i>
+                    <h1 class="text-2xl font-bold text-white">环应急战</h1>
+                </div>
+                <div class="flex items-center space-x-6">
+                    <a href="#" class="text-gray-300 hover:text-cyan-400 transition">历史复盘</a>
+                    <a href="#" class="text-gray-300 hover:text-cyan-400 transition">理论知识库</a>
+                    <div class="flex items-center space-x-3 pl-6 border-l border-gray-600">
+                        <i class="fa-solid fa-user-circle text-2xl text-gray-400"></i>
+                        <span class="text-white">赵根成 老师</span>
+                        <a href="login.html" title="退出登录"><i class="fa-solid fa-sign-out-alt text-gray-400 hover:text-red-500 transition"></i></a>
+                    </div>
+                </div>
+            </div>
+        </header>
+
+        <main class="flex-grow container mx-auto px-6 py-12">
+            <div class="text-center mb-12">
+                <h2 class="text-4xl font-extrabold text-white">案例推演库</h2>
+                <p class="text-gray-400 mt-2">选择一个案例，开启今天的实战推演课堂。</p>
+            </div>
+            
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+                <div class="bg-gray-800 rounded-xl overflow-hidden shadow-lg border border-gray-700 transform hover:-translate-y-2 transition-transform duration-300 group">
+                    <div class="relative h-56 bg-cover bg-center" style="background-image: url('assets/case-water-pollution.jpg');">
+                        <div class="absolute inset-0 bg-gradient-to-t from-black/80 to-transparent"></div>
+                        <span class="absolute top-4 left-4 bg-cyan-500 text-white text-xs font-bold px-3 py-1 rounded-full">水环境</span>
+                        <h3 class="absolute bottom-4 left-4 text-xl font-bold text-white">湘江某河段化工厂苯胺泄漏</h3>
+                    </div>
+                    <div class="p-6">
+                        <p class="text-gray-400 text-sm mb-4">模拟因码头撞击导致苯胺储罐破裂，污染物进入湘江，威胁下游饮用水源地的完整应急监测流程。</p>
+                        <div class="flex justify-between items-center mt-6">
+                             <a href="lobby.html" class="w-full text-center text-white bg-cyan-600 hover:bg-cyan-700 font-medium rounded-lg text-sm px-8 py-3 transition-all duration-300 group-hover:shadow-lg group-hover:shadow-cyan-500/30">
+                                <i class="fas fa-play mr-2"></i>开始推演
+                            </a>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="bg-gray-800 rounded-xl overflow-hidden shadow-lg border border-gray-700 relative group">
+                    <div class="relative h-56 bg-gray-700 flex items-center justify-center">
+                         <i class="fas fa-wind text-8xl text-gray-500"></i>
+                        <div class="absolute inset-0 bg-black/60"></div>
+                        <span class="absolute top-4 left-4 bg-gray-500 text-white text-xs font-bold px-3 py-1 rounded-full">大气环境</span>
+                         <span class="absolute bottom-4 right-4 bg-orange-500 text-white text-xs font-semibold px-3 py-1 rounded-md">V1.1 即将推出</span>
+                    </div>
+                    <div class="p-6">
+                        <h3 class="text-xl font-bold text-gray-500">化工厂有毒气体泄漏</h3>
+                        <p class="text-gray-500 text-sm mb-4">模拟化工厂发生爆炸，导致大量氯气泄漏，对下风向居民区造成威胁的应急监测场景。</p>
+                        <button class="w-full text-center text-gray-400 bg-gray-700 cursor-not-allowed font-medium rounded-lg text-sm px-8 py-3">
+                            <i class="fas fa-lock mr-2"></i>敬请期待
+                        </button>
+                    </div>
+                </div>
+
+                <div class="bg-gray-800 rounded-xl overflow-hidden shadow-lg border border-gray-700 relative group">
+                    <div class="relative h-56 bg-gray-700 flex items-center justify-center">
+                         <i class="fas fa-mountain text-8xl text-gray-500"></i>
+                        <div class="absolute inset-0 bg-black/60"></div>
+                        <span class="absolute top-4 left-4 bg-gray-500 text-white text-xs font-bold px-3 py-1 rounded-full">土壤环境</span>
+                         <span class="absolute bottom-4 right-4 bg-orange-500 text-white text-xs font-semibold px-3 py-1 rounded-md">V1.1 即将推出</span>
+                    </div>
+                    <div class="p-6">
+                        <h3 class="text-xl font-bold text-gray-500">重金属非法倾倒污染</h3>
+                        <p class="text-gray-500 text-sm mb-4">模拟发现非法倾倒的工业废渣，需对周边农田土壤进行重金属污染状况的应急调查与监测。</p>
+                         <button class="w-full text-center text-gray-400 bg-gray-700 cursor-not-allowed font-medium rounded-lg text-sm px-8 py-3">
+                            <i class="fas fa-lock mr-2"></i>敬请期待
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+</body>
+</html>
