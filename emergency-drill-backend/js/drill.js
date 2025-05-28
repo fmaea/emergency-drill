@@ -14,7 +14,7 @@ document.addEventListener('DOMContentLoaded', async function () {
     const nextStageBtn = document.getElementById('next-stage-btn');
     const pauseBtn = document.getElementById('pause-btn');
     const timerElement = document.getElementById('stage-timer');
-    const leaderboardElement = document.getElementById('leaderboard'); // 【新增】获取排行榜元素
+    const leaderboardElement = document.getElementById('leaderboard');
     const forceEndBtn = document.getElementById('force-end-btn');
     
     // --- 2. 状态变量初始化 ---
@@ -22,18 +22,12 @@ document.addEventListener('DOMContentLoaded', async function () {
     let currentCaseData = null;  
     let timerInterval;
     let isPaused = false;
-    let socket = null; 
-    window.drillMap = null; 
+    let socket = null; // WebSocket 实例 (当前版本未启用)
+    window.drillMap = null; // 高德地图实例 (如果案例需要)
 
-    // 【新增】计分和团队数据
-    let teamsData = [ // 模拟团队数据，实际应从lobby或服务器获取
-        { id: 'team1', name: '第一小组', score: 0, answers: {} },
-        { id: 'team2', name: '第二小组', score: 0, answers: {} },
-        { id: 'team3', name: '第三小组', score: 0, answers: {} }
-    ];
-    // 模拟当前操作的团队 (在单机教师端演示时，我们假设教师代表一个团队，或所有团队都做一样的选择)
-    // 在真实的多人场景中，这个teamId会来自学生端提交的身份信息
-    const currentOperatingTeamId = 'team1'; 
+    let teamsData = []; // 存储队伍信息，将从localStorage加载
+    // 【修改】假设教师端操作的是第一个实际队伍的视角进行答题和计分模拟
+    let currentOperatingTeamId = null; 
 
     // --- 3. 页面启动逻辑 ---
     const urlParams = new URLSearchParams(window.location.search);
@@ -45,13 +39,41 @@ document.addEventListener('DOMContentLoaded', async function () {
     }
 
     try {
+        // 从localStorage加载队伍信息
+        const storedTeams = localStorage.getItem('drillTeams');
+        if (storedTeams) {
+            teamsData = JSON.parse(storedTeams);
+            teamsData.forEach(team => { // 确保每个队伍对象都有score和answers属性
+                if (team.score === undefined) team.score = 0;
+                if (team.answers === undefined) team.answers = {};
+            });
+            // 【修改】如果队伍存在，默认操作第一个队伍 (如果不是占位符)
+            const firstActualTeam = teamsData.find(t => t.id !== 'placeholder' && t.id !== 'no-teams');
+            if (firstActualTeam) {
+                currentOperatingTeamId = firstActualTeam.id;
+            }
+            console.log('[DRILL] 从localStorage加载的队伍数据:', JSON.parse(JSON.stringify(teamsData)));
+        } else {
+            teamsData = [{id: 'placeholder', name: "等待队伍加入...", score: 0, answers: {}}];
+            console.warn("[DRILL] 未能从localStorage加载队伍信息。");
+        }
+        if (teamsData.filter(t => t.id !== 'placeholder' && t.id !== 'no-teams').length === 0) { 
+             // 如果过滤后没有真实队伍，可以添加一个默认的教师操作队伍
+            if (!teamsData.find(t => t.id === 'teacher_ops_team')) { // 避免重复添加
+                const teacherTeam = {id: 'teacher_ops_team', name: "教师演示", score: 0, answers: {}};
+                teamsData.push(teacherTeam);
+                if (!currentOperatingTeamId) currentOperatingTeamId = teacherTeam.id;
+            }
+        }
+
+
         const response = await fetch(`http://localhost:7890/api/cases/${caseId}`);
         if (!response.ok) throw new Error(`获取案例数据失败，状态: ${response.status}`);
         currentCaseData = await response.json();
         console.log('成功获取案例数据:', JSON.parse(JSON.stringify(currentCaseData)));
         
         initializeDrillUI(currentCaseData);
-        // initializeWebSocket(); 
+        // initializeWebSocket(); // WebSocket相关功能，待后续集成
         
     } catch (error) {
         handleFatalError(error.message);
@@ -74,8 +96,8 @@ document.addEventListener('DOMContentLoaded', async function () {
         if (headerCaseTitleElement) headerCaseTitleElement.textContent = `案例: ${caseData.title.replace(/\[cite: \d+\]/g, '').trim()}`;
         if (forceEndBtn) forceEndBtn.href = `results.html?caseId=${caseId}`;
         
-        startTimer(caseData.estimatedTime ? caseData.estimatedTime * 60 : 180 * 60);
-        updateLeaderboard(); // 【新增】初始化排行榜显示
+        startTimer(caseData.estimatedTime ? caseData.estimatedTime * 60 : 180 * 60); // 默认180分钟
+        updateLeaderboard(); // 初始化排行榜显示
         
         if (caseData.stages && caseData.stages.length > 0) {
             setActiveStage(0);
@@ -85,7 +107,6 @@ document.addEventListener('DOMContentLoaded', async function () {
     }
 
     function startTimer(durationInSeconds) {
-        // ... (计时器逻辑不变) ...
         clearInterval(timerInterval);
         let timer = durationInSeconds;
         timerInterval = setInterval(() => {
@@ -93,8 +114,8 @@ document.addEventListener('DOMContentLoaded', async function () {
                 if (timer < 0) {
                     clearInterval(timerInterval);
                     if (timerElement) timerElement.textContent = "时间到";
-                    // 时间到，自动提交当前阶段答案并进入下一阶段 (可选逻辑)
-                    // handleSubmitAndNextStage(); 
+                    // 可选：时间到自动提交并进入下一阶段
+                    // calculateScoresAndProceed(); 
                 } else {
                     const minutes = Math.floor(timer / 60);
                     const seconds = timer % 60;
@@ -107,35 +128,39 @@ document.addEventListener('DOMContentLoaded', async function () {
 
     // --- 5. 核心：设置和渲染指定阶段 ---
     function setActiveStage(stageIndex) {
-        // ... (setActiveStage 逻辑不变，确保调用 renderStageContent) ...
         if (!currentCaseData || !currentCaseData.stages || !currentCaseData.stages[stageIndex]) {
             console.error(`无法设置阶段 ${stageIndex}：案例数据不完整或阶段索引无效。`);
             if (headerStageTitleElement) headerStageTitleElement.textContent = '阶段加载错误';
             return;
         }
+        
         currentStageIndex = stageIndex;
         const stageData = currentCaseData.stages[stageIndex];
+
         if (headerStageTitleElement) {
             headerStageTitleElement.textContent = (stageData.title || `阶段 ${stageData.stageNumber}`).replace(/\[cite: \d+\]/g, '').trim();
         }
+
         stagePanels.forEach((panel, index) => {
-            if (panel) {
+            if (panel) { // 确保panel元素存在
                 panel.classList.toggle('stage-active', index === stageIndex);
             }
         });
+
+        // 确保只对当前激活的面板进行渲染
         if (stagePanels[stageIndex]) {
             renderStageContent(stagePanels[stageIndex], stageData);
         } else {
             console.error(`错误：找不到阶段 ${stageIndex} 的面板元素 (stagePanels[${stageIndex}])`);
         }
+
         if (nextStageBtn) {
             nextStageBtn.innerHTML = (stageIndex >= currentCaseData.stages.length - 1) ? "完成推演" : "提交并进入下一阶段";
         }
     }
 
-    // --- 6. 核心：渲染每个阶段的动态内容 (修改：为选项添加事件监听) ---
+    // --- 6. 核心：渲染每个阶段的动态内容 ---
     function renderStageContent(panelElement, stageData) {
-        // ... (大部分渲染逻辑不变，主要修改问题渲染部分) ...
         if (!panelElement || !stageData) {
             console.warn(`[渲染错误] 阶段 ${stageData ? stageData.stageNumber : '未知'}：缺少面板元素或阶段数据`);
             return;
@@ -162,13 +187,13 @@ document.addEventListener('DOMContentLoaded', async function () {
         
         const imageUrl = stageData.stageBackgroundImageUrl || stageData.overlayImageUrl; 
 
-        // 【修改】图片加载逻辑保持不变，确保路径正确
+        // 图片渲染逻辑
         if (stageData.stageNumber === 1) {
-            // ... (阶段1图片和事件描述渲染不变)
-             const eventTitle = panelElement.querySelector('.stage-event-title');
+            const eventTitle = panelElement.querySelector('.stage-event-title');
             if (eventTitle && currentCaseData) eventTitle.textContent = `事件：${currentCaseData.title.replace(/\[cite: \d+\]/g, '').trim()}`;
             const eventDesc = panelElement.querySelector('.stage-event-description');
             if (eventDesc && currentCaseData) eventDesc.textContent = currentCaseData.description.replace(/\[cite: \d+\]/g, '').trim();
+
             const backgroundHostStage1 = panelElement.querySelector('.stage-background-host');
             if (backgroundHostStage1) {
                 backgroundHostStage1.style.backgroundImage = imageUrl ? `url('${imageUrl}')` : 'none';
@@ -206,13 +231,13 @@ document.addEventListener('DOMContentLoaded', async function () {
                 }
             }
         }
-
-        // --- 【通用问题渲染逻辑 - 重点修改处】 ---
+        
+        // --- 问题渲染逻辑 ---
         if (stageData.questions && Array.isArray(stageData.questions)) {
             const targetQuestionContainer = (stageData.stageNumber === 2) ? panelElement.querySelector('.stage-questions-container') : questionsContainer;
             
             if (targetQuestionContainer) {
-                 if (stageData.stageNumber !== 2) targetQuestionContainer.innerHTML = ''; // 非阶段二清空通用容器
+                 if (stageData.stageNumber !== 2) targetQuestionContainer.innerHTML = '';
 
                 stageData.questions.forEach((question, qIndex) => {
                     const questionId = `s${stageData.stageNumber}-q${qIndex}`;
@@ -225,30 +250,43 @@ document.addEventListener('DOMContentLoaded', async function () {
 
                     if (question.answerOptions) {
                         question.answerOptions.forEach((opt, optIndex) => {
-                            const optionId = `${questionId}-opt${optIndex}`;
-                            const inputType = question.questionType === 'MultipleChoice-Multi' ? 'checkbox' : 'radio';
-                            const optionLabel = document.createElement('label');
-                            optionLabel.className = 'block w-full text-left p-3 bg-gray-700 rounded-lg hover:bg-cyan-800 cursor-pointer transition-all';
-                            optionLabel.setAttribute('for', optionId);
+                            const optionFullId = `opt-${questionId}-${optIndex}`;
+                            
+                            if (question.questionType === 'Binary-Decision' && stageData.stageNumber === 4) {
+                                const button = document.createElement('button');
+                                button.className = `px-8 md:px-12 py-3 md:py-4 text-md md:text-lg font-bold text-white rounded-lg shadow-lg transform hover:scale-105 transition-all ${optIndex === 0 ? 'bg-green-600 hover:bg-green-700' : 'ml-4 bg-red-600 hover:bg-red-700'}`;
+                                button.innerHTML = `<i class="fas ${optIndex === 0 ? 'fa-check-circle' : 'fa-times-circle'} mr-2"></i>${opt.text.replace(/\[cite: \d+\]/g, '').trim()}`;
+                                button.dataset.value = opt.text.replace(/"/g, '&quot;');
+                                button.addEventListener('click', (event) => {
+                                    const buttonsInQuestion = event.target.closest('.question-item').querySelectorAll('button');
+                                    buttonsInQuestion.forEach(btn => btn.classList.remove('ring-2', 'ring-offset-2', 'ring-cyan-500'));
+                                    event.target.classList.add('ring-2', 'ring-offset-2', 'ring-cyan-500');
+                                    handleAnswerSelection(currentOperatingTeamId, stageData.stageNumber, qIndex, question.questionType, event.target);
+                                });
+                                optionsDiv.appendChild(button);
+                            } else {
+                                const inputType = question.questionType === 'MultipleChoice-Multi' ? 'checkbox' : 'radio';
+                                const label = document.createElement('label');
+                                label.className = 'block w-full text-left p-3 bg-gray-700 rounded-lg hover:bg-cyan-800 cursor-pointer transition-all';
+                                label.setAttribute('for', optionFullId);
 
-                            const inputElement = document.createElement('input');
-                            inputElement.type = inputType;
-                            inputElement.name = questionId; // 同一问题的单选按钮需要相同的name
-                            inputElement.id = optionId;
-                            inputElement.value = opt.text.replace(/"/g, '&quot;');
-                            inputElement.className = 'mr-3 accent-cyan-500';
-                            // 【新增】为选项添加点击事件，记录答案
-                            inputElement.addEventListener('change', (event) => {
-                                handleAnswerSelection(currentOperatingTeamId, stageData.stageNumber, qIndex, question.questionType, event.target);
-                            });
+                                const inputElement = document.createElement('input');
+                                inputElement.type = inputType;
+                                inputElement.name = questionId; 
+                                inputElement.id = optionFullId;
+                                inputElement.value = opt.text.replace(/"/g, '&quot;');
+                                inputElement.className = 'mr-3 accent-cyan-500 align-middle';
+                                inputElement.addEventListener('change', (event) => {
+                                    handleAnswerSelection(currentOperatingTeamId, stageData.stageNumber, qIndex, question.questionType, event.target);
+                                });
 
-                            optionLabel.appendChild(inputElement);
-                            optionLabel.appendChild(document.createTextNode(` ${opt.text.replace(/\[cite: \d+\]/g, '').trim()}`));
-                            optionsDiv.appendChild(optionLabel);
+                                label.appendChild(inputElement);
+                                label.appendChild(document.createTextNode(` ${opt.text.replace(/\[cite: \d+\]/g, '').trim()}`));
+                                optionsDiv.appendChild(label);
+                            }
                         });
                     }
                     questionWrapper.appendChild(optionsDiv);
-
                     if (question.hint) { 
                         const hintP = document.createElement('p');
                         hintP.className = 'text-xs text-gray-500 mt-2';
@@ -256,22 +294,44 @@ document.addEventListener('DOMContentLoaded', async function () {
                         questionWrapper.appendChild(hintP);
                     }
                     
-                    // 特殊处理阶段二的HTML结构
                     if (stageData.stageNumber === 2) {
+                        let specificContainerFound = false;
                         if (qIndex === 0 && panelElement.querySelector('#s2-q1-title')) {
                             panelElement.querySelector('#s2-q1-title').textContent = `${qIndex + 1}. ${question.questionText.replace(/\[cite: \d+\]/g, '').trim()}`;
                             const s2q1Opt = panelElement.querySelector('#s2-q1-options');
                             if(s2q1Opt) { s2q1Opt.innerHTML = ''; s2q1Opt.appendChild(optionsDiv); }
-                            if(question.hint && s2q1Opt) { /* Add hint similarly */ }
+                             if(question.hint && s2q1Opt && s2q1Opt.parentElement) { 
+                                let hintElement = s2q1Opt.parentElement.querySelector('.question-hint-s2-1');
+                                if(!hintElement) {
+                                   hintElement = document.createElement('p');
+                                   hintElement.className = `text-sm text-gray-500 mt-1 question-hint-s2-1`;
+                                   s2q1Opt.insertAdjacentElement('afterend', hintElement);
+                                }
+                                hintElement.textContent = `提示: ${question.hint.replace(/\[cite: \d+\]/g, '').trim()}`;
+                            }
+                            specificContainerFound = true;
                         } else if (qIndex === 1 && panelElement.querySelector('#s2-q2-title')) {
                              panelElement.querySelector('#s2-q2-title').textContent = `${qIndex + 1}. ${question.questionText.replace(/\[cite: \d+\]/g, '').trim()}`;
                             const s2q2Opt = panelElement.querySelector('#s2-q2-options');
                             if(s2q2Opt) { s2q2Opt.innerHTML = ''; s2q2Opt.appendChild(optionsDiv); }
-                            if(question.hint && s2q2Opt) { /* Add hint similarly */ }
-                        } else if (targetQuestionContainer) { // 第三个及之后的问题追加到总容器
+                            if(question.hint && s2q2Opt && s2q2Opt.parentElement) { 
+                                let hintElement = s2q2Opt.parentElement.querySelector('.question-hint-s2-2');
+                                if(!hintElement) {
+                                   hintElement = document.createElement('p');
+                                   hintElement.className = `text-sm text-gray-500 mt-1 question-hint-s2-2`;
+                                   s2q2Opt.insertAdjacentElement('afterend', hintElement);
+                                }
+                                hintElement.textContent = `提示: ${question.hint.replace(/\[cite: \d+\]/g, '').trim()}`;
+                            }
+                            specificContainerFound = true;
+                        }
+                        
+                        if (!specificContainerFound && targetQuestionContainer) { 
+                             // For 3rd question onwards in stage 2, append to the main question container for stage 2
+                             questionWrapper.className = 'mt-6 dynamic-question-block p-3 bg-gray-800/50 rounded-lg'; // Add some top margin
                              targetQuestionContainer.appendChild(questionWrapper);
                         }
-                    } else {
+                    } else { 
                          if(targetQuestionContainer) targetQuestionContainer.appendChild(questionWrapper);
                     }
                 });
@@ -281,63 +341,105 @@ document.addEventListener('DOMContentLoaded', async function () {
         }
     }
     
-    // 【新增】处理答案选择的函数
     function handleAnswerSelection(teamId, stageNum, questionIndex, questionType, targetElement) {
+        if (!teamId) {
+            console.warn("无法记录答案：当前操作的队伍ID未设定。");
+            return;
+        }
         const team = teamsData.find(t => t.id === teamId);
-        if (!team) return;
+        if (!team) {
+            console.warn(`未找到团队ID: ${teamId}，无法记录答案。`);
+            return;
+        }
 
         const questionKey = `s${stageNum}-q${questionIndex}`;
-        if (!team.answers[questionKey]) {
-            team.answers[questionKey] = [];
+        let selectedValue = targetElement.value;
+        if (targetElement.tagName === 'BUTTON' && targetElement.dataset.value) {
+            selectedValue = targetElement.dataset.value;
         }
 
         if (questionType === 'MultipleChoice-Multi') {
-            if (targetElement.checked) {
-                if (!team.answers[questionKey].includes(targetElement.value)) {
-                    team.answers[questionKey].push(targetElement.value);
-                }
-            } else {
-                team.answers[questionKey] = team.answers[questionKey].filter(ans => ans !== targetElement.value);
+            if (!team.answers[questionKey] || !Array.isArray(team.answers[questionKey])) {
+                team.answers[questionKey] = [];
             }
-        } else { // Single choice or Binary
-            team.answers[questionKey] = [targetElement.value];
+            const currentValueIndex = team.answers[questionKey].indexOf(selectedValue);
+            if (targetElement.checked) { 
+                if (currentValueIndex === -1) { 
+                    team.answers[questionKey].push(selectedValue);
+                }
+            } else { 
+                if (currentValueIndex > -1) {
+                    team.answers[questionKey].splice(currentValueIndex, 1);
+                }
+            }
+        } else { 
+            team.answers[questionKey] = [selectedValue]; 
         }
-        console.log(`团队 ${team.name} 在 ${questionKey} 的答案更新为:`, team.answers[questionKey]);
+        console.log(`团队 ${team.name} (${team.id}) 在 ${questionKey} 的答案更新为:`, team.answers[questionKey]);
     }
 
-    // 【新增】计算并更新分数的函数
     function calculateScoresAndProceed() {
         const stageData = currentCaseData.stages[currentStageIndex];
-        if (!stageData || !stageData.questions) return;
+        if (!stageData || !stageData.questions) {
+            console.warn("无法计分：当前阶段数据或问题数据缺失。");
+            proceedToNextStageOrEnd();
+            return;
+        }
 
         teamsData.forEach(team => {
-            let stageScore = 0;
+            if(team.id === 'placeholder' || team.id === 'no-teams') return; 
+            // 【修改】确保只为当前操作的队伍（或所有队伍，如果需要）计分
+            if (!currentOperatingTeamId || team.id !== currentOperatingTeamId) {
+                 // 如果您希望所有队伍都根据教师端的选择（或一个预设答案）计分，
+                 // 您需要修改这里的逻辑，或者从服务器获取每个队伍的答案。
+                 // 当前，只有 currentOperatingTeamId 的答案会被记录和计分。
+                 // 为了演示，我们也可以让所有队伍都获得分数。
+                 // return; // 如果只想为操作的队伍计分，取消此注释
+            }
+
+
+            let stageScoreForTeam = 0;
             stageData.questions.forEach((question, qIndex) => {
                 const questionKey = `s${stageData.stageNumber}-q${qIndex}`;
-                const correctOptions = question.answerOptions.filter(opt => opt.isCorrect).map(opt => opt.text.replace(/"/g, '&quot;'));
-                const teamAnswers = team.answers[questionKey] || [];
+                const correctOptions = (question.answerOptions || [])
+                                        .filter(opt => opt.isCorrect === true) 
+                                        .map(opt => opt.text.replace(/"/g, '&quot;'));
+                
+                // 【修改】确保team.answers存在才访问
+                const teamAnswersForQuestion = team.answers && team.answers[questionKey] ? team.answers[questionKey] : [];
 
-                let isCorrectForQuestion = false;
-                if (question.questionType === 'MultipleChoice-Multi') {
-                    // 多选题：所有正确选项都被选中，且没有选中任何错误选项
-                    isCorrectForQuestion = teamAnswers.length === correctOptions.length && 
-                                           correctOptions.every(co => teamAnswers.includes(co));
-                } else { // 单选题或二元决策
-                    isCorrectForQuestion = teamAnswers.length === 1 && correctOptions.includes(teamAnswers[0]);
+
+                let isCorrectForThisQuestion = false;
+                if (correctOptions.length > 0) { 
+                    if (question.questionType === 'MultipleChoice-Multi') {
+                        isCorrectForThisQuestion = teamAnswersForQuestion.length === correctOptions.length && 
+                                               correctOptions.every(co => teamAnswersForQuestion.includes(co)) &&
+                                               teamAnswersForQuestion.every(ta => correctOptions.includes(ta));
+                    } else { 
+                        isCorrectForThisQuestion = teamAnswersForQuestion.length === 1 && correctOptions.includes(teamAnswersForQuestion[0]);
+                    }
                 }
 
-                if (isCorrectForQuestion) {
-                    stageScore += (question.points || 0); // 如果问题没有points字段，则不加分
+                if (isCorrectForThisQuestion) {
+                    stageScoreForTeam += (question.points || 0);
                 }
             });
-            team.score += stageScore; // 累加到总分
-            console.log(`团队 ${team.name} 在阶段 ${stageData.stageNumber} 获得 ${stageScore} 分，总分: ${team.score}`);
-            team.answers = {}; // 清空当前阶段的答案，为下一阶段做准备
+            team.score += stageScoreForTeam;
+            console.log(`团队 ${team.name} 在阶段 ${stageData.stageNumber} 获得 ${stageScoreForTeam} 分，总分: ${team.score}`);
+            
+            stageData.questions.forEach((_, qIndex) => {
+                const questionKeyToClear = `s${stageData.stageNumber}-q${qIndex}`;
+                if (team.answers) { // 确保answers对象存在
+                    delete team.answers[questionKeyToClear];
+                }
+            });
         });
 
         updateLeaderboard();
+        proceedToNextStageOrEnd();
+    }
 
-        // 进入下一阶段或结束推演
+    function proceedToNextStageOrEnd() {
         if (currentStageIndex >= currentCaseData.stages.length - 1) {
             if (confirm('所有阶段已完成！确认结束本次推演吗？')) {
                 if (forceEndBtn && forceEndBtn.href) window.location.href = forceEndBtn.href;
@@ -348,41 +450,51 @@ document.addEventListener('DOMContentLoaded', async function () {
         }
     }
     
-    // 【新增】更新排行榜显示的函数
     function updateLeaderboard() {
-        if (!leaderboardElement) return;
-        leaderboardElement.innerHTML = ''; // 清空旧的排行榜
-
-        // 对团队按分数降序排序
-        const sortedTeams = [...teamsData].sort((a, b) => b.score - a.score);
-
+        if (!leaderboardElement) {
+            console.warn("排行榜元素未找到，无法更新。");
+            return;
+        }
+        leaderboardElement.innerHTML = ''; 
+        if (teamsData.length === 1 && (teamsData[0].id === 'placeholder' || teamsData[0].id === 'no-teams')) {
+            const li = document.createElement('li');
+            li.className = 'text-center text-gray-500 p-2';
+            li.textContent = teamsData[0].name; 
+            leaderboardElement.appendChild(li);
+            return;
+        }
+        const actualTeams = teamsData.filter(team => team.id !== 'placeholder' && team.id !== 'no-teams');
+        const sortedTeams = [...actualTeams].sort((a, b) => b.score - a.score);
+        if (sortedTeams.length === 0) {
+             leaderboardElement.innerHTML = '<li class="text-center text-gray-500 p-2">暂无队伍参与排名</li>';
+             return;
+        }
         sortedTeams.forEach((team, index) => {
             const li = document.createElement('li');
-            li.className = 'leaderboard-item flex justify-between items-center p-2 rounded-md transition-all duration-300 ease-in-out';
-            // 根据排名添加不同背景色
-            if (index === 0) li.classList.add('bg-yellow-500/30', 'border', 'border-yellow-500');
-            else if (index === 1) li.classList.add('bg-gray-500/30');
-            else if (index === 2) li.classList.add('bg-orange-700/30');
-            else li.classList.add('bg-gray-700/50');
-
+            li.className = 'leaderboard-item flex justify-between items-center p-2 rounded-md transition-all duration-300 ease-in-out text-sm';
+            if (index === 0) li.classList.add('bg-yellow-500/30', 'border', 'border-yellow-500', 'text-yellow-300');
+            else if (index === 1) li.classList.add('bg-gray-400/30', 'border', 'border-gray-400', 'text-gray-200');
+            else if (index === 2) li.classList.add('bg-orange-600/30', 'border', 'border-orange-600', 'text-orange-300');
+            else li.classList.add('bg-gray-700/50', 'text-gray-300');
             const rankSpan = document.createElement('span');
-            rankSpan.className = 'w-6 text-center font-semibold';
+            rankSpan.className = 'w-8 text-center font-semibold';
             if (index < 3) {
-                const icons = ['fa-trophy text-yellow-400', 'fa-medal text-gray-400', 'fa-award text-orange-400'];
-                rankSpan.innerHTML = `<i class="fas ${icons[index]}"></i>`;
+                const icons = ['fa-trophy text-yellow-400', 'fa-medal text-gray-300', 'fa-award text-orange-400'];
+                rankSpan.innerHTML = `<i class="fas ${icons[index]} text-lg"></i>`;
             } else {
                 rankSpan.textContent = `${index + 1}.`;
             }
-            
             const nameSpan = document.createElement('span');
-            nameSpan.className = 'flex-grow px-2 font-semibold';
+            nameSpan.className = 'flex-grow px-2 font-semibold truncate';
             nameSpan.textContent = team.name;
-            if (index === 0) nameSpan.classList.add('text-yellow-300');
-
+            nameSpan.title = team.name;
             const scoreSpan = document.createElement('span');
-            scoreSpan.className = 'text-yellow-400 font-bold';
+            scoreSpan.className = 'font-bold';
             scoreSpan.textContent = `${team.score}分`;
-
+             if (index === 0) scoreSpan.classList.add('text-yellow-400');
+             else if (index === 1) scoreSpan.classList.add('text-gray-200');
+             else if (index === 2) scoreSpan.classList.add('text-orange-300');
+             else scoreSpan.classList.add('text-gray-300');
             li.appendChild(rankSpan);
             li.appendChild(nameSpan);
             li.appendChild(scoreSpan);
@@ -390,17 +502,12 @@ document.addEventListener('DOMContentLoaded', async function () {
         });
     }
 
-
     // --- 7. 事件监听器 ---
     if (nextStageBtn) {
-        nextStageBtn.addEventListener('click', () => {
-            // 【修改】点击按钮时，先计算分数，再进入下一阶段
-            calculateScoresAndProceed();
-        });
+        nextStageBtn.addEventListener('click', calculateScoresAndProceed);
     }
 
     if(pauseBtn) {
-        // ... (暂停按钮逻辑不变) ...
         pauseBtn.addEventListener('click', () => {
             isPaused = !isPaused;
             if (pauseBtn) {
