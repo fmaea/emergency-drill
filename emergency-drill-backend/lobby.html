@@ -23,72 +23,94 @@
         .animate-fade-in-down {
             animation: fade-in-down 0.5s ease-out forwards;
         }
+        /* 确保二维码图片在容器内居中（如果qrcode.js生成的是img） */
+        #qrcode-container img, 
+        #qrcode-container canvas {
+            margin: auto;
+            display: block;
+        }
     </style>
 </head>
-<body class="bg-gray-900 text-gray-200 overflow-hidden">
-    <div class="min-h-screen flex flex-col items-center justify-center p-8 bg-gradient-to-br from-gray-900 to-blue-900/50">
+<body class="bg-gray-900 text-gray-200 flex flex-col min-h-screen">
+    <header class="bg-gray-800/80 backdrop-blur-sm border-b border-gray-700 px-6 py-3 flex justify-between items-center z-20 shrink-0">
+        <div>
+            <h1 id="lobby-case-title" class="text-xl font-bold text-white">案例加载中...</h1>
+            <p class="text-sm text-gray-400">推演准备大厅</p>
+        </div>
+        <div class="flex items-center space-x-4">
+            <a href="home.html" class="px-4 py-2 bg-cyan-600 hover:bg-cyan-700 rounded-md text-white font-semibold transition-transform transform hover:scale-105">
+                <i class="fas fa-arrow-left mr-2"></i>返回案例库
+            </a>
+        </div>
+    </header>
+
+    <main class="flex-grow container mx-auto px-4 md:px-6 py-8 md:py-10">
         <div class="text-center mb-8">
-            <h1 id="case-title" class="text-4xl font-bold text-white">正在加载案例...</h1>
             <p class="text-cyan-400 text-lg mt-2">小组对抗模式</p>
         </div>
 
-        <div class="w-full max-w-6xl grid grid-cols-1 md:grid-cols-3 gap-8 items-start">
-            <div class="col-span-1 bg-gray-800/50 p-6 rounded-xl border border-gray-700 h-full">
+        <div class="w-full max-w-6xl mx-auto grid grid-cols-1 md:grid-cols-3 gap-8 items-start">
+            <div class="md:col-span-1 bg-gray-800/70 p-6 rounded-xl border border-gray-700 shadow-lg flex flex-col h-full">
                 <div class="flex justify-between items-center border-b border-gray-600 pb-3 mb-4">
                     <h2 class="text-xl font-bold text-white flex items-center"><i class="fas fa-users mr-3 text-cyan-400"></i>已加入队伍</h2>
                     <span id="team-count" class="text-lg font-bold text-cyan-400 bg-gray-700 px-3 py-1 rounded-full">0</span>
                 </div>
-                <ul id="team-list-container" class="space-y-3 h-64 overflow-y-auto">
-                    <li id="waiting-placeholder" class="bg-gray-800 border-2 border-dashed border-gray-600 p-3 rounded-lg flex items-center justify-center h-full">
-                        <span class="text-gray-500 text-center">等待学生加入...</span>
-                    </li>
+                <ul id="teams-list" class="space-y-3 flex-grow overflow-y-auto min-h-[200px] bg-gray-850 p-2 rounded-md border border-gray-600">
+                    <li class="text-gray-500 text-center py-4">等待学生加入...</li>
                 </ul>
             </div>
 
-            <div class="col-span-1 flex flex-col items-center justify-start text-center">
-                <div class="bg-white p-4 rounded-lg shadow-2xl shadow-cyan-500/20">
-                    <canvas id="qr-code-canvas"></canvas>
+            <div class="md:col-span-1 flex flex-col items-center justify-start text-center bg-gray-800/70 p-6 rounded-xl border border-gray-700 shadow-lg h-full">
+                <h3 class="text-2xl font-semibold text-white mb-3">学生扫码加入</h3>
+                <p class="text-gray-400 text-sm mb-1">确保手机与教师电脑在同一局域网</p>
+                <div id="qrcode-container" class="my-4 p-2 bg-white rounded-lg w-52 h-52 md:w-60 md:h-60 flex items-center justify-center shadow-inner">
+                    <p class="text-gray-700">二维码生成中...</p>
                 </div>
-                <h3 class="text-2xl font-semibold text-white mt-6">学生扫码或通过链接加入</h3>
-                <p class="text-gray-400">无需App，手机浏览器扫码或打开链接即可</p>
+                <p class="text-lg mt-2 text-gray-300">或输入加入码: <span id="join-code" class="font-bold text-2xl text-yellow-300 tracking-wider ml-2">----</span></p>
                 
-                <div class="w-full max-w-xs mt-4">
-                    <label for="join-link" class="sr-only">加入链接</label>
+                <div id="status-message-lobby" class="mt-4 h-6 text-sm text-center text-gray-400 w-full">等待服务器连接...</div>
+
+                <div class="w-full max-w-xs mt-auto pt-4">
+                    <label for="join-link-display" class="sr-only">加入链接</label>
                     <div class="relative">
-                         <input type="text" id="join-link" readonly class="bg-gray-700 border border-gray-600 text-cyan-300 text-sm rounded-lg block w-full pl-3 pr-10 py-2.5 truncate" value="正在生成链接...">
+                         <input type="text" id="join-link-display" readonly class="bg-gray-700 border border-gray-600 text-cyan-300 text-sm rounded-lg block w-full pl-3 pr-10 py-2.5 truncate" value="链接待生成...">
                         <button id="copy-link-btn" class="absolute inset-y-0 right-0 flex items-center px-3 text-gray-400 hover:text-white" title="复制链接">
                             <i class="fas fa-copy"></i>
                         </button>
                     </div>
-                    <p id="copy-feedback" class="text-green-400 text-sm mt-2 h-4"></p>
+                    <p id="copy-feedback" class="text-green-400 text-sm mt-1 h-4"></p>
                 </div>
             </div>
 
-            <div class="col-span-1 bg-gray-800/50 p-6 rounded-xl border border-gray-700 h-full">
+            <div class="md:col-span-1 bg-gray-800/70 p-6 rounded-xl border border-gray-700 shadow-lg h-full">
                 <h2 class="text-xl font-bold text-white mb-4 border-b border-gray-600 pb-3 flex items-center"><i class="fas fa-scroll mr-3 text-cyan-400"></i>推演规则</h2>
-                <ul class="space-y-3 text-gray-300">
-                    <li class="flex items-start"><i class="fas fa-check-circle mt-1 mr-3 text-green-400"></i><span>推演共分为4个计分阶段，考验综合决策能力。</span></li>
-                    <li class="flex items-start"><i class="fas fa-check-circle mt-1 mr-3 text-green-400"></i><span>决策的<strong class="text-yellow-400 mx-1">准确性</strong>与<strong class="text-yellow-400 mx-1">速度</strong>将共同决定得分。</span></li>
-                    <li class="flex items-start"><i class="fas fa-check-circle mt-1 mr-3 text-green-400"></i><span>小组内需要充分协作，共同制定最优方案。</span></li>
-                    <li class="flex items-start"><i class="fas fa-check-circle mt-1 mr-3 text-green-400"></i><span>最终排名将决定本次课堂的“应急之星”。</span></li>
+                <ul class="space-y-3 text-gray-300 text-sm">
+                    <li class="flex items-start"><i class="fas fa-check-circle mt-1 mr-2 text-green-400"></i><span>推演共分为4个计分阶段，考验综合决策能力。</span></li>
+                    <li class="flex items-start"><i class="fas fa-check-circle mt-1 mr-2 text-green-400"></i><span>决策的<strong class="text-yellow-400 mx-1">准确性</strong>与<strong class="text-yellow-400 mx-1">速度</strong>将共同决定得分。</span></li>
+                    <li class="flex items-start"><i class="fas fa-check-circle mt-1 mr-2 text-green-400"></i><span>小组内需要充分协作，共同制定最优方案。</span></li>
+                    <li class="flex items-start"><i class="fas fa-check-circle mt-1 mr-2 text-green-400"></i><span>最终排名将决定本次课堂的“应急之星”。</span></li>
                 </ul>
             </div>
         </div>
         
-        <div class="mt-12 text-center">
-            <a id="start-drill-btn" href="drill_main.html" class="px-16 py-4 text-xl font-bold text-white bg-green-600 hover:bg-green-700 rounded-lg shadow-lg shadow-green-500/30 transform hover:scale-105 transition-all duration-300">
+        <div class="mt-10 text-center">
+            <button id="start-drill-btn" disabled class="px-12 py-3 md:px-16 md:py-4 text-lg md:text-xl font-bold text-white bg-green-600 hover:bg-green-700 rounded-lg shadow-lg shadow-green-500/30 transform hover:scale-105 transition-all duration-300 disabled:bg-gray-500 disabled:opacity-70 disabled:cursor-not-allowed disabled:shadow-none">
                 <i class="fas fa-flag-checkered mr-3"></i>全员就绪，开始推演
-            </a>
+            </button>
             <div class="mt-4">
                 <a href="home.html" class="text-gray-400 hover:text-white transition-colors">
                     <i class="fas fa-arrow-left mr-2"></i>返回案例库
                 </a>
             </div>
         </div>
-    </div>
+    </main>
 
+    <footer class="text-center py-4 text-gray-500 text-sm border-t border-gray-700 mt-auto shrink-0">
+        环应急战 - 应急监测情景推演教学平台
+    </footer>
+
+    <script src="js/lib/qrcode.min.js"></script> 
     <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrious/4.0.2/qrious.min.js"></script>
     <script src="js/lobby.js"></script>
 </body>
 </html>

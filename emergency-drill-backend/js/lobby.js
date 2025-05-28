@@ -1,180 +1,277 @@
 // 文件路径: js/lobby.js
 
-document.addEventListener('DOMContentLoaded', () => {
-  const titleElement = document.getElementById('case-title');
-  const teamListContainer = document.getElementById('team-list-container');
-  const startDrillButton = document.getElementById('start-drill-btn'); // 确保HTML中开始按钮有此ID
-  const joinLinkInput = document.getElementById('join-link');
-  const copyLinkButton = document.getElementById('copy-link-btn');
-  const copyFeedbackElement = document.getElementById('copy-feedback');
-  const qrCanvasElement = document.getElementById('qr-code-canvas');
-  const teamCountElement = document.getElementById('team-count'); // 获取队伍数量显示元素
+document.addEventListener('DOMContentLoaded', async () => {
+    const caseTitleElement = document.getElementById('lobby-case-title');
+    const qrCodeContainer = document.getElementById('qrcode-container');
+    const joinCodeElement = document.getElementById('join-code'); // 用于显示 lobbyId
+    const teamsListElement = document.getElementById('teams-list');
+    const teamCountElement = document.getElementById('team-count');
+    const startDrillBtn = document.getElementById('start-drill-btn');
+    const statusMessageLobby = document.getElementById('status-message-lobby');
+    const joinLinkDisplayInput = document.getElementById('join-link-display');
+    const copyLinkBtn = document.getElementById('copy-link-btn');
+    const copyFeedbackElement = document.getElementById('copy-feedback');
 
-  let currentLobbyTeams = []; // 【新增】用于存储当前大厅的队伍信息
-  let teamCounter = 0; // 【新增】用于队伍计数
 
-  const urlParams = new URLSearchParams(window.location.search);
-  const caseId = urlParams.get('caseId');
+    const urlParams = new URLSearchParams(window.location.search);
+    const caseId = urlParams.get('caseId');
+    let currentLobbyId = null; // 教师端持有的、由后端生成的唯一大厅ID
+    let currentTeamsData = []; // 从服务器同步的队伍数据
+    let studentJoinUrlForQRCode = ''; // 学生扫码用的URL，只含caseId
 
-  if (!caseId) {
-    if(titleElement) titleElement.textContent = '错误：未选择任何案例';
-    if (startDrillButton) {
-      startDrillButton.classList.add('pointer-events-none', 'opacity-50');
-      startDrillButton.removeAttribute('href'); // 如果是<a>标签
+    if (!caseId) {
+        if(caseTitleElement) caseTitleElement.textContent = '错误：案例ID未提供';
+        if(statusMessageLobby) {
+            statusMessageLobby.textContent = '无法加载大厅，URL中缺少案例ID。';
+            statusMessageLobby.className = 'text-red-500 text-sm mt-2 text-center';
+        }
+        if(startDrillBtn) startDrillBtn.disabled = true;
+        console.error("[LOBBY.JS] URL中缺少caseId参数。");
+        return;
     }
-    if(joinLinkInput) joinLinkInput.value = '无效的案例ID';
-    return; 
-  }
 
-  // 初始时禁用开始按钮 (如果需要，可以根据队伍数量来启用)
-  if (startDrillButton) {
-      startDrillButton.classList.add('pointer-events-none', 'opacity-50');
-  }
-  
-  // 生成加入链接和二维码 (假设 qrious.min.js 已在 lobby.html 引入)
-  if (joinLinkInput) {
-    // 【修改】确保使用正确的origin，或者硬编码一个可访问的地址
-    // 对于本地文件系统 (file://)，window.location.origin可能是null
-    // 您可能需要一个本地服务器来测试，或者提供一个固定的基础URL
-    let baseUrl = window.location.origin;
-    if (baseUrl === "null" || baseUrl === null) { // 处理 file:// 协议的情况
-        // 尝试从当前URL中提取基础路径，但这可能不可靠
-        // 最好是在一个web服务器环境下运行
-        const pathArray = window.location.pathname.split('/');
-        pathArray.pop(); // 移除 lobby.html
-        baseUrl = window.location.protocol + "//" + window.location.host + pathArray.join('/');
-        if (!window.location.host) baseUrl = "http://localhost:PORT"; // 替换 PORT 为您的本地服务器端口
-        console.warn("当前在file://协议下，生成的加入链接可能不准确。建议使用本地服务器。");
-    }
-    const joinUrl = `${baseUrl}/join.html?caseId=${caseId}`;
-    joinLinkInput.value = joinUrl;
-
-    if (qrCanvasElement && typeof QRious !== 'undefined') {
-        new QRious({
-            element: qrCanvasElement,
-            value: joinUrl,
-            size: 208, 
-            padding: 0,
-            level: 'H', 
-        });
-    }
-  }
-  if(copyLinkButton && joinLinkInput) {
-    copyLinkButton.addEventListener('click', () => {
-        navigator.clipboard.writeText(joinLinkInput.value).then(() => {
-            if(copyFeedbackElement) copyFeedbackElement.textContent = '复制成功!';
-            setTimeout(() => { if(copyFeedbackElement) copyFeedbackElement.textContent = ''; }, 2000);
-        }).catch(err => {
-            console.error('复制失败: ', err);
-            if(copyFeedbackElement) copyFeedbackElement.textContent = '复制失败';
-        });
+    // 1. 连接 WebSocket
+    const socket = io('http://localhost:7890', { // 确保后端地址和端口正确
+        transports: ['websocket']
     });
-  }
 
+    socket.on('connect', () => {
+        console.log('[LOBBY.JS] 教师端成功连接到 WebSocket 服务器:', socket.id);
+        if(statusMessageLobby) {
+            statusMessageLobby.textContent = '已连接到服务器，正在创建推演大厅...';
+            statusMessageLobby.className = 'text-blue-400 text-sm mt-2 text-center';
+        }
+        createLobbyAndSetup(); 
+    });
 
-  fetchCaseDetails(caseId, titleElement);
+    socket.on('connect_error', (error) => {
+        console.error('[LOBBY.JS] 教师端 WebSocket 连接错误:', error);
+        if(statusMessageLobby) {
+            statusMessageLobby.textContent = '无法连接到实时服务器。请检查网络或确认服务器正在运行。';
+            statusMessageLobby.className = 'text-red-500 text-sm mt-2 text-center';
+        }
+        if(startDrillBtn) startDrillBtn.disabled = true;
+        if(qrCodeContainer) qrCodeContainer.innerHTML = '<p class="text-red-400 text-center">无法连接服务器</p>';
+    });
 
-  const socket = io('http://localhost:7890'); 
-
-  socket.on('connect', () => {
-    console.log('[LOBBY] 成功连接到 WebSocket 服务器');
-    socket.emit('joinLobby', { caseId: caseId, studentName: '教师端监控' }); 
-  });
-
-  socket.on('studentJoined', (data) => {
-    console.log('[LOBBY] 新成员加入:', data);
+    socket.on('teamsUpdated', (teams) => {
+        console.log('[LOBBY.JS] 收到队伍更新:', teams);
+        currentTeamsData = teams; 
+        if(teamsListElement && teamCountElement) {
+            teamsListElement.innerHTML = ''; 
+            teamCountElement.textContent = teams.length;
+            if (teams.length === 0) {
+                teamsListElement.innerHTML = '<li class="text-gray-500 text-center py-4">暂无队伍加入，等待学生扫码...</li>';
+                if(startDrillBtn) startDrillBtn.disabled = true;
+            } else {
+                teams.forEach(team => {
+                    const li = document.createElement('li');
+                    li.className = 'bg-gray-700 p-3 rounded-md shadow text-gray-200 animate-fade-in-down';
+                    li.textContent = `${team.name} (成员: ${team.students && team.students.length > 0 ? team.students.join(', ') : '等待成员'})`;
+                    teamsListElement.appendChild(li);
+                });
+                if(startDrillBtn) startDrillBtn.disabled = false;
+            }
+        }
+    });
     
-    const waitingPlaceholder = document.getElementById('waiting-placeholder');
-    if (waitingPlaceholder) {
-      waitingPlaceholder.style.display = 'none'; // 隐藏“等待中”
-    }
-    
-    teamCounter++; // 队伍计数增加
-    if(teamCountElement) teamCountElement.textContent = teamCounter;
-    
-    if (teamListContainer) {
-        const newTeamLi = document.createElement('li');
-        newTeamLi.className = 'bg-gray-700 p-3 rounded-lg flex items-center justify-between animate-fade-in-down';
-        newTeamLi.innerHTML = `
-        <span class="font-semibold text-lg flex items-center">
-            <i class="fas fa-users-cog mr-3 text-gray-400"></i>${data.teamName || '未知队伍'}
-        </span>
-        <span class="text-sm text-gray-400">${data.studentName || '未知学生'}</span>
-        `;
-        teamListContainer.appendChild(newTeamLi);
-    }
-    
-    // 【新增】将加入的队伍信息存储起来
-    if (data.teamName) { // 确保队名存在
-        const existingTeam = currentLobbyTeams.find(team => team.name === data.teamName);
-        if (!existingTeam) { // 避免重复添加相同队名的队伍
-            currentLobbyTeams.push({
-                id: `team-${Date.now()}-${Math.random().toString(16).slice(2)}`, // 生成一个简单唯一ID
-                name: data.teamName,
-                score: 0,
-                answers: {} // 为后续计分做准备
+    socket.on('lobbyError', (data) => { 
+        console.error('[LOBBY.JS] 大厅错误:', data.message);
+        if(statusMessageLobby) {
+            statusMessageLobby.textContent = `大厅错误: ${data.message}`;
+            statusMessageLobby.className = 'text-red-500 text-sm mt-2 text-center';
+        }
+    });
+
+    socket.on('drillHasStarted', (data) => {
+        console.log('[LOBBY.JS] 服务器确认推演已开始:', data);
+        // 此时教师端应该已经跳转，如果还在这个页面，可以给出提示
+        if (statusMessageLobby) {
+            statusMessageLobby.textContent = '推演已在另一窗口开始。';
+            statusMessageLobby.className = 'text-green-500 text-sm mt-2 text-center';
+        }
+    });
+
+    async function createLobbyAndSetup() {
+        try {
+            if(statusMessageLobby && !statusMessageLobby.textContent.includes('已连接')) {
+                 if(statusMessageLobby) statusMessageLobby.textContent = '正在创建推演大厅...';
+            }
+            const response = await fetch('http://localhost:7890/api/lobbies/create', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ caseId })
             });
-            // 【新增】将更新后的队伍列表保存到 localStorage
-            localStorage.setItem('drillTeams', JSON.stringify(currentLobbyTeams));
-            console.log('[LOBBY] 更新队伍列表到 localStorage:', currentLobbyTeams);
+
+            if (!response.ok) {
+                let errorData;
+                try { errorData = await response.json(); } catch (e) { errorData = { message: response.statusText }; }
+                throw new Error(`创建大厅失败: ${response.status} - ${errorData.message || '未知错误'}`);
+            }
+            const data = await response.json();
+            
+            currentLobbyId = data.lobbyId; // 后端生成的唯一大厅ID
+            studentJoinUrlForQRCode = data.joinUrl; // 学生扫码的URL (只含caseId)
+            const returnedCaseId = data.caseId;
+            let returnedCaseTitle = data.caseTitle;
+
+            if (!currentLobbyId || !studentJoinUrlForQRCode) {
+                throw new Error('服务器返回数据不完整：缺少 lobbyId 或 joinUrl。');
+            }
+            if (returnedCaseId !== caseId) {
+                 console.warn(`[LOBBY.JS] 服务器返回的caseId (${returnedCaseId}) 与请求的不符 (${caseId})`);
+            }
+
+            if (caseTitleElement) {
+                caseTitleElement.textContent = returnedCaseTitle && returnedCaseTitle !== "案例加载中..." ? `案例: ${returnedCaseTitle}` : `案例加载中 (ID: ${caseId})...`;
+                if (!returnedCaseTitle || returnedCaseTitle === "案例加载中...") {
+                    fetch(`http://localhost:7890/api/cases/${caseId}`)
+                        .then(res => res.json())
+                        .then(caseData => {
+                            if (caseData && caseData.title) {
+                                caseTitleElement.textContent = `案例: ${caseData.title.replace(/\[cite: \d+\]/g, '').trim()}`;
+                            } else {
+                                caseTitleElement.textContent = `案例 (ID: ${caseId})`;
+                            }
+                        }).catch(err => console.error('[LOBBY.JS] 二次获取案例标题失败:', err));
+                }
+            }
+            if (joinCodeElement) { // 显示 lobbyId 作为加入码
+                joinCodeElement.textContent = currentLobbyId;
+            }
+            if (joinLinkDisplayInput) { // 显示学生加入链接
+                joinLinkDisplayInput.value = studentJoinUrlForQRCode;
+            }
+
+
+            if (qrCodeContainer && typeof QRCode !== 'undefined') {
+                qrCodeContainer.innerHTML = ''; 
+                new QRCode(qrCodeContainer, {
+                    text: studentJoinUrlForQRCode, // 使用只包含 caseId 的 URL 生成二维码
+                    width: qrCodeContainer.offsetWidth > 150 ? qrCodeContainer.offsetWidth - 16 : 184, // 动态调整二维码大小
+                    height: qrCodeContainer.offsetHeight > 150 ? qrCodeContainer.offsetHeight - 16 : 184,
+                    colorDark: "#000000", // 二维码颜色改为黑色，背景是白色
+                    colorLight: "#ffffff", 
+                    correctLevel: QRCode.CorrectLevel.H
+                });
+                console.log('[LOBBY.JS] 二维码已生成，内容:', studentJoinUrlForQRCode);
+                if(statusMessageLobby) {
+                    statusMessageLobby.textContent = '大厅已创建，请学生扫描二维码或输入加入码加入。';
+                    statusMessageLobby.className = 'text-green-400 text-sm mt-2 text-center';
+                }
+            } else {
+                if (!qrCodeContainer) console.error('[LOBBY.JS] 错误：未找到二维码容器元素 (qrcode-container)。');
+                if (typeof QRCode === 'undefined') {
+                    console.error('[LOBBY.JS] 错误：QRCode 库未加载。请确保在 lobby.html 中已正确引入 qrcode.min.js。');
+                    if(qrCodeContainer) qrCodeContainer.innerHTML = '<p class="text-red-500 text-center">QRCode库未加载</p>';
+                }
+                if(statusMessageLobby) {
+                    statusMessageLobby.textContent = '二维码生成失败，请检查控制台。';
+                    statusMessageLobby.className = 'text-red-500 text-sm mt-2 text-center';
+                }
+            }
+
+            // 教师端使用 lobbyId 加入自己的 WebSocket 房间
+            socket.emit('teacherJoinsLobby', currentLobbyId);
+
+        } catch (error) {
+            console.error('[LOBBY.JS] 初始化大厅失败:', error);
+            if(caseTitleElement) caseTitleElement.textContent = '创建大厅失败';
+            if(qrCodeContainer) qrCodeContainer.innerHTML = `<p class="text-red-400 text-center">无法生成二维码或加载大厅信息: ${error.message}</p>`;
+            if(statusMessageLobby) {
+                statusMessageLobby.textContent = `初始化大厅时发生错误: ${error.message}`;
+                statusMessageLobby.className = 'text-red-500 text-sm mt-2 text-center';
+            }
+            if(startDrillBtn) startDrillBtn.disabled = true;
         }
     }
+    
+    if (startDrillBtn) {
+        startDrillBtn.addEventListener('click', () => {
+            if (currentTeamsData.length > 0 && currentLobbyId && caseId) {
+                const drillTeams = currentTeamsData.map(team => ({
+                    id: team.id, // 队伍ID应由服务器在学生加入时分配
+                    name: team.name,
+                    students: team.students || [],
+                    score: team.score || 0,
+                    answers: team.answers || {} 
+                }));
 
-    // 如果有队伍加入，则激活“开始推演”按钮
-    if (teamCounter > 0 && startDrillButton) {
-      startDrillButton.classList.remove('pointer-events-none', 'opacity-50');
-      startDrillButton.href = `drill_main.html?caseId=${caseId}`; // 设置正确的跳转链接
+                localStorage.setItem('drillTeams', JSON.stringify(drillTeams));
+                localStorage.setItem('currentDrillCaseId', caseId); 
+                localStorage.setItem('currentLobbyId', currentLobbyId); // 保存LobbyId
+                
+                console.log('[LOBBY.JS] 存储到localStorage的队伍数据:', JSON.parse(JSON.stringify(drillTeams)));
+                console.log(`[LOBBY.JS] 准备跳转到 drill_main.html?caseId=${caseId}&lobbyId=${currentLobbyId}`);
+                
+                socket.emit('teacherStartsDrill', { lobbyId: currentLobbyId, caseId: caseId, teamsData: drillTeams });
+                window.location.href = `drill_main.html?caseId=${caseId}&lobbyId=${currentLobbyId}`; // 跳转时带上lobbyId
+            } else {
+                let alertMsg = "无法开始推演：";
+                if (currentTeamsData.length === 0) alertMsg += "至少需要一个队伍加入。 ";
+                if (!currentLobbyId) alertMsg += "大厅ID无效或未成功创建。 ";
+                if (!caseId) alertMsg += "案例ID无效。 ";
+                alert(alertMsg);
+                if(statusMessageLobby) {
+                    statusMessageLobby.textContent = alertMsg;
+                    statusMessageLobby.className = 'text-yellow-500 text-sm mt-2 text-center';
+                }
+            }
+        });
+    } else {
+        console.error("[LOBBY.JS] 错误：未找到开始推演按钮元素 (start-drill-btn)");
     }
-  });
 
-  socket.on('drillStarted', (data) => {
-    if (data.caseId && data.caseId === caseId) { 
-        console.log(`[LOBBY] 收到开始指令，跳转到: drill_main.html?caseId=${data.caseId}`);
-        // 在跳转前，确保最新的队伍列表已保存 (虽然studentJoined时已保存，这里再保存一次也无妨)
-        localStorage.setItem('drillTeams', JSON.stringify(currentLobbyTeams));
-        window.location.href = `drill_main.html?caseId=${data.caseId}`;
+    if (copyLinkBtn && joinLinkDisplayInput) {
+        copyLinkBtn.addEventListener('click', () => {
+            joinLinkDisplayInput.select();
+            joinLinkDisplayInput.setSelectionRange(0, 99999); // For mobile devices
+            try {
+                // 使用 Clipboard API (推荐，但需要HTTPS或localhost)
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(joinLinkDisplayInput.value)
+                        .then(() => {
+                            if(copyFeedbackElement) copyFeedbackElement.textContent = '链接已复制!';
+                            setTimeout(() => { if(copyFeedbackElement) copyFeedbackElement.textContent = ''; }, 2000);
+                        })
+                        .catch(err => {
+                            console.warn('[LOBBY.JS] 使用 Clipboard API 复制失败, 尝试 execCommand:', err);
+                            fallbackCopyTextToClipboard(joinLinkDisplayInput.value);
+                        });
+                } else {
+                    fallbackCopyTextToClipboard(joinLinkDisplayInput.value);
+                }
+            } catch (err) {
+                console.error('[LOBBY.JS] 复制链接失败:', err);
+                if(copyFeedbackElement) {
+                     copyFeedbackElement.textContent = '复制失败!';
+                     copyFeedbackElement.className = 'text-red-400 text-sm mt-1 h-4';
+                }
+                setTimeout(() => { if(copyFeedbackElement) {copyFeedbackElement.textContent = ''; copyFeedbackElement.className = 'text-green-400 text-sm mt-1 h-4';} }, 2000);
+            }
+        });
     }
-  });
-  
-  // 【修改】确保教师点击“开始推演”按钮时，也保存队伍列表并携带caseId跳转
-  if (startDrillButton) {
-      startDrillButton.addEventListener('click', function(event) {
-          event.preventDefault(); // 阻止默认的<a>标签跳转
-          if (teamCounter === 0 && !confirm("当前没有队伍加入，确定要开始推演吗？")) {
-              return;
-          }
-          localStorage.setItem('drillTeams', JSON.stringify(currentLobbyTeams));
-          // 如果是通过socket.emit('startDrill')来触发服务器开始，则服务器的'drillStarted'事件会负责跳转
-          // 如果是教师直接点击按钮跳转（无服务器强制开始），则需要在这里直接跳转
-          // 为保持一致，我们假设教师点击按钮也是通过socket通知服务器，然后由服务器广播开始
-          if (socket && socket.connected) {
-              console.log(`[LOBBY] 教师点击开始推演，发送 "startDrill" 事件，案例ID: ${caseId}`);
-              socket.emit('startDrill', { caseId: caseId });
-          } else {
-              alert('错误：与服务器的连接已断开，无法开始推演。请刷新页面。');
-          }
-      });
-  }
 
-
-  socket.on('disconnect', () => console.log('[LOBBY] 与 WebSocket 服务器的连接已断开'));
-  socket.on('connect_error', (error) => console.error('[LOBBY] WebSocket 连接错误:', error));
+    function fallbackCopyTextToClipboard(text) {
+        const textArea = document.createElement("textarea");
+        textArea.value = text;
+        // 避免在屏幕上闪烁
+        textArea.style.top = "0";
+        textArea.style.left = "0";
+        textArea.style.position = "fixed";
+        document.body.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        try {
+            const successful = document.execCommand('copy');
+            const msg = successful ? '链接已复制!' : '复制失败!';
+            if(copyFeedbackElement) copyFeedbackElement.textContent = msg;
+        } catch (err) {
+            console.error('[LOBBY.JS] Fallback复制失败:', err);
+            if(copyFeedbackElement) copyFeedbackElement.textContent = '复制失败!';
+        }
+        document.body.removeChild(textArea);
+        setTimeout(() => { if(copyFeedbackElement) copyFeedbackElement.textContent = ''; }, 2000);
+    }
 
 });
-
-async function fetchCaseDetails(caseId, titleElement) {
-  try {
-    const response = await fetch(`http://localhost:7890/api/cases/${caseId}`); 
-    if (!response.ok) throw new Error(`获取案例详情失败，状态码: ${response.status}`);
-    
-    const caseData = await response.json();
-    if (titleElement) {
-      titleElement.textContent = caseData.title || '案例标题加载失败';
-    }
-  } catch (error) {
-    console.error('获取案例详情时发生错误:', error.message);
-    if (titleElement) {
-      titleElement.textContent = '加载案例标题失败';
-    }
-  }
-}

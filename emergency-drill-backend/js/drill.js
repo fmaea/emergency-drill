@@ -504,9 +504,52 @@ document.addEventListener('DOMContentLoaded', async function () {
 
     // --- 7. 事件监听器 ---
     if (nextStageBtn) {
-        nextStageBtn.addEventListener('click', calculateScoresAndProceed);
+        nextStageBtn.addEventListener('click', () => {
+            // 首先调用计分和流程推进函数
+            calculateScoresAndProceed(); 
+            // calculateScoresAndProceed 函数内部的 proceedToNextStageOrEnd 会处理跳转        // 我们需要在 proceedToNextStageOrEnd 决定跳转到 results.html 前保存分数
+        });
     }
 
+    if (forceEndBtn) {
+        forceEndBtn.addEventListener('click', (event) => {
+            // event.preventDefault(); // 如果 forceEndBtn 是 <a> 标签，阻止其默认跳转
+            if (confirm('确定要强制结束本次推演并查看结果吗？')) {
+                // 【新增】在强制结束时保存团队分数
+                if (currentCaseData && teamsData) {
+                    localStorage.setItem('drillResults', JSON.stringify(teamsData));
+                    localStorage.setItem('currentCaseTitle', currentCaseData.title); // 【新增】同时保存案例标题
+                    console.log('推演强制结束，团队分数已保存到localStorage:', teamsData);
+                }
+                // 确保href属性已在HTML中正确设置，或者在此处用JS跳转
+                // window.location.href = `results.html?caseId=${caseId}`; // 如果 forceEndBtn 不是 a 标签，或需要动态 caseId
+            } else {
+                 event.preventDefault(); // 如果用户取消，则阻止跳转
+            }
+        });
+    }
+    
+    function proceedToNextStageOrEnd() {
+        if (currentStageIndex >= currentCaseData.stages.length - 1) {
+            if (confirm('所有阶段已完成！确认结束本次推演并查看结果吗？')) {
+                // 【新增】在推演自然完成时保存团队分数
+                if (currentCaseData && teamsData) {
+                    localStorage.setItem('drillResults', JSON.stringify(teamsData));
+                    localStorage.setItem('currentCaseTitle', currentCaseData.title.replace(/\\/g, '').trim()); // 保存清理后的案例标题
+                    console.log('推演完成，团队分数已保存到localStorage:', teamsData);
+                }
+                if (forceEndBtn && forceEndBtn.href) { // forceEndBtn 通常就是结果页的链接
+                    window.location.href = forceEndBtn.href; // 使用已有的跳转逻辑
+                } else {
+                    window.location.href = `results.html?caseId=${caseId}`; // 备用跳转
+                }
+            }
+        } else {
+            const nextStage = currentStageIndex + 1;
+            setActiveStage(nextStage);
+        }
+    }
+    
     if(pauseBtn) {
         pauseBtn.addEventListener('click', () => {
             isPaused = !isPaused;

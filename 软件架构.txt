@@ -1,0 +1,33 @@
+c:\Users\hn511\Desktop\应急监测课程软件\emergency-drill-backend
+├── .gitignore
+├── README.md
+├── assets\                # 静态资源
+│   ├── caseA\            # 案例A相关资源
+│   └── caseB\            # 案例B相关资源
+├── case_id.txt           # 案例ID记录
+├── config\               # 配置
+│   └── db.js            # 数据库配置
+├── controllers\          # 控制器(当前为空)
+├── drill_main.html       # 推演主界面
+├── home.html            # 案例库首页
+├── index.html           # 项目入口
+├── join.html           # 学生加入界面
+├── js\                 # 前端脚本
+│   ├── drill.js        # 推演主逻辑
+│   ├── home.js         # 首页逻辑
+│   ├── join.js         # 加入逻辑
+│   ├── lobby.js        # 大厅逻辑
+│   └── results.js      # 结果页逻辑
+├── lobby.html          # 推演大厅
+├── login.html         # 登录页
+├── middleware\       # 中间件
+│   └── authMiddleware.js # 认证中间件
+├── models\           # 数据模型
+│   ├── Case.js       # 案例模型
+│   └── Teacher.js    # 教师模型
+├── package.json      # 项目依赖
+├── results.html      # 结果页
+├── routes\          # 路由
+│   ├── authRoutes.js # 认证路由
+│   └── caseRoutes.js # 案例路由
+└── server.js        # 服务端入口
