@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>加入推演 - 环应急战</title>
+    <title>组织推演 - 环应急战</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700&display=swap" rel="stylesheet">
@@ -32,27 +32,40 @@
             <p class="text-cyan-400 text-lg mt-2">小组对抗模式</p>
         </div>
 
-        <div class="w-full max-w-6xl grid grid-cols-3 gap-8 items-start">
-            <div class="col-span-1 bg-gray-800/50 p-6 rounded-xl border border-gray-700">
-                <h2 class="text-xl font-bold text-white mb-4 flex items-center"><i class="fas fa-users mr-3 text-cyan-400"></i>已加入队伍</h2>
-                <ul id="team-list-container" class="space-y-3">
-                    <li class="bg-gray-800 border-2 border-dashed border-gray-600 p-3 rounded-lg flex items-center justify-center">
-                        <span class="text-gray-500">等待学生加入...</span>
+        <div class="w-full max-w-6xl grid grid-cols-1 md:grid-cols-3 gap-8 items-start">
+            <div class="col-span-1 bg-gray-800/50 p-6 rounded-xl border border-gray-700 h-full">
+                <div class="flex justify-between items-center border-b border-gray-600 pb-3 mb-4">
+                    <h2 class="text-xl font-bold text-white flex items-center"><i class="fas fa-users mr-3 text-cyan-400"></i>已加入队伍</h2>
+                    <span id="team-count" class="text-lg font-bold text-cyan-400 bg-gray-700 px-3 py-1 rounded-full">0</span>
+                </div>
+                <ul id="team-list-container" class="space-y-3 h-64 overflow-y-auto">
+                    <li id="waiting-placeholder" class="bg-gray-800 border-2 border-dashed border-gray-600 p-3 rounded-lg flex items-center justify-center h-full">
+                        <span class="text-gray-500 text-center">等待学生加入...</span>
                     </li>
                 </ul>
             </div>
 
-            <div class="col-span-1 flex flex-col items-center justify-center text-center">
+            <div class="col-span-1 flex flex-col items-center justify-start text-center">
                 <div class="bg-white p-4 rounded-lg shadow-2xl shadow-cyan-500/20">
-                    <img src="assets/qr-code.svg" alt="加入推演二维码" class="w-64 h-64">
+                    <canvas id="qr-code-canvas"></canvas>
                 </div>
-                <h3 class="text-2xl font-semibold text-white mt-6">学生扫码加入队伍</h3>
-                <p class="text-gray-400">无需App，手机浏览器扫码即可</p>
-                <p class="text-2xl font-mono text-yellow-400 mt-4 tracking-widest">加入码: 8866</p>
+                <h3 class="text-2xl font-semibold text-white mt-6">学生扫码或通过链接加入</h3>
+                <p class="text-gray-400">无需App，手机浏览器扫码或打开链接即可</p>
+                
+                <div class="w-full max-w-xs mt-4">
+                    <label for="join-link" class="sr-only">加入链接</label>
+                    <div class="relative">
+                         <input type="text" id="join-link" readonly class="bg-gray-700 border border-gray-600 text-cyan-300 text-sm rounded-lg block w-full pl-3 pr-10 py-2.5 truncate" value="正在生成链接...">
+                        <button id="copy-link-btn" class="absolute inset-y-0 right-0 flex items-center px-3 text-gray-400 hover:text-white" title="复制链接">
+                            <i class="fas fa-copy"></i>
+                        </button>
+                    </div>
+                    <p id="copy-feedback" class="text-green-400 text-sm mt-2 h-4"></p>
+                </div>
             </div>
 
-            <div class="col-span-1 bg-gray-800/50 p-6 rounded-xl border border-gray-700">
-                <h2 class="text-xl font-bold text-white mb-4 flex items-center"><i class="fas fa-scroll mr-3 text-cyan-400"></i>推演规则</h2>
+            <div class="col-span-1 bg-gray-800/50 p-6 rounded-xl border border-gray-700 h-full">
+                <h2 class="text-xl font-bold text-white mb-4 border-b border-gray-600 pb-3 flex items-center"><i class="fas fa-scroll mr-3 text-cyan-400"></i>推演规则</h2>
                 <ul class="space-y-3 text-gray-300">
                     <li class="flex items-start"><i class="fas fa-check-circle mt-1 mr-3 text-green-400"></i><span>推演共分为4个计分阶段，考验综合决策能力。</span></li>
                     <li class="flex items-start"><i class="fas fa-check-circle mt-1 mr-3 text-green-400"></i><span>决策的<strong class="text-yellow-400 mx-1">准确性</strong>与<strong class="text-yellow-400 mx-1">速度</strong>将共同决定得分。</span></li>
@@ -62,15 +75,20 @@
             </div>
         </div>
         
-        <div class="mt-12">
-            <a href="drill_main.html" class="px-16 py-4 text-xl font-bold text-white bg-green-600 hover:bg-green-700 rounded-lg shadow-lg shadow-green-500/30 transform hover:scale-105 transition-all duration-300">
+        <div class="mt-12 text-center">
+            <a id="start-drill-btn" href="drill_main.html" class="px-16 py-4 text-xl font-bold text-white bg-green-600 hover:bg-green-700 rounded-lg shadow-lg shadow-green-500/30 transform hover:scale-105 transition-all duration-300">
                 <i class="fas fa-flag-checkered mr-3"></i>全员就绪，开始推演
             </a>
-            <a href="home.html" class="ml-4 text-gray-400 hover:text-white">返回案例库</a>
+            <div class="mt-4">
+                <a href="home.html" class="text-gray-400 hover:text-white transition-colors">
+                    <i class="fas fa-arrow-left mr-2"></i>返回案例库
+                </a>
+            </div>
         </div>
     </div>
 
     <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrious/4.0.2/qrious.min.js"></script>
     <script src="js/lobby.js"></script>
 </body>
 </html>

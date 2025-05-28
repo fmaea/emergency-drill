@@ -1,0 +1,46 @@
+emergency-drill-backend
+├── .gitignore
+├── README.md
+├── assets\
+│   ├── caseA\
+│   │   └── xiangjiang-background.jpg
+│   ├── caseB\
+│   │   ├── qihe-background.jpg
+│   │   ├── qihe-stage1.jpg
+│   │   ├── qihe-stage1.png
+│   │   ├── qihe-stage2.jpg
+│   │   ├── qihe-stage3.jpg
+│   │   ├── qihe-stage4.jpg
+│   │   ├── qihe-stage4.png
+│   │   └── stageB.txt
+│   └── chart.png
+├── case_id.txt
+├── config\
+│   └── db.js
+├── controllers\
+├── drill_main.html
+├── home.html
+├── index.html
+├── join.html
+├── js\
+│   ├── drill.js
+│   ├── home.js
+│   ├── join.js
+│   └── lobby.js
+├── lobby.html
+├── login.html
+├── middleware\
+│   └── authMiddleware.js
+├── models\
+│   ├── Case.js
+│   ├── Teacher.js
+│   ├── caseA.txt
+│   └── caseB.txt
+├── npm
+├── package-lock.json
+├── package.json
+├── results.html
+├── routes\
+│   ├── authRoutes.js
+│   └── caseRoutes.js
+└── server.js
