@@ -51,14 +51,22 @@ document.addEventListener('DOMContentLoaded', async function () {
         currentStudentTeamId = localStorage.getItem('currentStudentTeamId');
         currentLobbyId = localStorage.getItem('currentLobbyId');
         
-        // Determine if user is teacher - simplistic way for now, can be refined
-        // A more robust way would be a flag from localStorage set at login, or a server-verified role
-        if (!currentStudentTeamId && localStorage.getItem('token')) { // Assuming only teachers have a 'token'
+        const userRole = localStorage.getItem('userRoleForDrill');
+        if (userRole === 'teacher') {
             isTeacher = true;
-            console.log('[DRILL.JS] Running as Teacher.');
+            console.log('[DRILL.JS] Running as Teacher (identified by userRoleForDrill flag).');
+            localStorage.removeItem('userRoleForDrill'); // Clean up the flag after use
+            // currentStudentTeamId will remain null or as previously set for teacher if they were also a student (unlikely)
         } else {
+            isTeacher = false; 
+            // currentStudentTeamId should have been loaded earlier from localStorage.
+            // If not, it means this is a student who somehow skipped the join localStorage setup.
+            if (!currentStudentTeamId) {
+                console.warn('[DRILL.JS] Running as Student, but currentStudentTeamId is not found in localStorage. UI might not function correctly for student-specific actions.');
+            }
             console.log(`[DRILL.JS] Running as Student. Team ID: ${currentStudentTeamId}, Lobby ID: ${currentLobbyId}`);
         }
+        // The old logic `!currentStudentTeamId && localStorage.getItem('token')` is now superseded by the explicit flag for teachers.
 
         socket = io(window.location.protocol + '//' + window.location.hostname + ':7890', { transports: ['websocket'] });
 
@@ -145,8 +153,8 @@ document.addEventListener('DOMContentLoaded', async function () {
             }
         }
 
-
-        const response = await fetch(`http://localhost:7890/api/cases/${caseId}`);
+        const apiUrlBase = `${window.location.protocol}//${window.location.hostname}:7890`;
+        const response = await fetch(`${apiUrlBase}/api/cases/${dbCaseId}`);
         if (!response.ok) throw new Error(`获取案例数据失败，状态: ${response.status}`);
         currentCaseData = await response.json();
         console.log('成功获取案例数据:', JSON.parse(JSON.stringify(currentCaseData)));

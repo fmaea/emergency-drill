@@ -14,7 +14,8 @@ async function fetchAndDisplayCases() {
   
   try {
     // 调用我们后端的接口，注意替换为您的正确端口号
-    const response = await fetch('http://localhost:7890/api/cases');
+    const apiUrlBase = `${window.location.protocol}//${window.location.hostname}:7890`;
+    const response = await fetch(`${apiUrlBase}/api/cases`);
 
     // 检查HTTP响应是否成功
     if (!response.ok) {

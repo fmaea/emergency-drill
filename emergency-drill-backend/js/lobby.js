@@ -201,6 +201,8 @@ document.addEventListener('DOMContentLoaded', async () => {
                 localStorage.setItem('currentDrillCaseId', caseId); 
                 localStorage.setItem('currentLobbyId', currentLobbyId); // 保存LobbyId
                 
+                localStorage.setItem('userRoleForDrill', 'teacher');
+                
                 console.log('[LOBBY.JS] 存储到localStorage的队伍数据:', JSON.parse(JSON.stringify(drillTeams)));
                 console.log(`[LOBBY.JS] 准备跳转到 drill_main.html?caseId=${caseId}&lobbyId=${currentLobbyId}`);
                 
