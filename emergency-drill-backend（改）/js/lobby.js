@@ -31,7 +31,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     // 1. 连接 WebSocket
-    const socket = io(window.location.protocol + '//' + window.location.hostname + ':7890', { // 确保后端地址和端口正确
+    const socket = io('http://localhost:7890', { // 确保后端地址和端口正确
         transports: ['websocket']
     });
 
@@ -111,7 +111,10 @@ document.addEventListener('DOMContentLoaded', async () => {
             const data = await response.json();
             
             currentLobbyId = data.lobbyId; // 后端生成的唯一大厅ID
-            studentJoinUrlForQRCode = data.joinUrl; // 学生扫码的URL (只含caseId)
+            // 【关键修改点】：直接使用后端返回的完整 joinUrl
+            // 后端 (lobbyRoutes.js) 现在会提供包含正确IP的完整URL
+            studentJoinUrlForQRCode = data.joinUrl; 
+            
             const returnedCaseId = data.caseId;
             let returnedCaseTitle = data.caseTitle;
 
@@ -147,7 +150,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (qrCodeContainer && typeof QRCode !== 'undefined') {
                 qrCodeContainer.innerHTML = ''; 
                 new QRCode(qrCodeContainer, {
-                    text: studentJoinUrlForQRCode, // 使用只包含 caseId 的 URL 生成二维码
+                    text: studentJoinUrlForQRCode, // 使用后端返回的完整 URL 生成二维码
                     width: qrCodeContainer.offsetWidth > 150 ? qrCodeContainer.offsetWidth - 16 : 184, // 动态调整二维码大小
                     height: qrCodeContainer.offsetHeight > 150 ? qrCodeContainer.offsetHeight - 16 : 184,
                     colorDark: "#000000", // 二维码颜色改为黑色，背景是白色
@@ -188,27 +191,33 @@ document.addEventListener('DOMContentLoaded', async () => {
     
     if (startDrillBtn) {
         startDrillBtn.addEventListener('click', () => {
-            if (currentTeamsData.length > 0 && currentLobbyId && caseId) {
-                const drillTeams = currentTeamsData.map(team => ({
-                    id: team.id, // 队伍ID应由服务器在学生加入时分配
-                    name: team.name,
-                    students: team.students || [],
-                    score: team.score || 0,
-                    answers: team.answers || {} 
-                }));
+            // 在发送 teamsData 给服务器之前，检查是否需要添加教师演示队伍
+            let teamsToSend = [...currentTeamsData]; // 复制一份，避免修改原始 currentTeamsData
 
-                localStorage.setItem('drillTeams', JSON.stringify(drillTeams));
+            // 如果没有实际的学生队伍加入，则添加一个教师演示队伍
+            if (teamsToSend.filter(t => t.id !== 'placeholder' && t.id !== 'no-teams').length === 0) {
+                const teacherOpsTeam = {id: 'teacher_ops_team', name: "教师演示", students: [], score: 0, answers: {}};
+                teamsToSend.push(teacherOpsTeam);
+                console.log("[LOBBY.JS] 无学生队伍加入，添加教师演示队伍到发送数据中。");
+            }
+
+            if (teamsToSend.length > 0 && currentLobbyId && caseId) {
+                // 将准备好的队伍数据存储到 localStorage，供教师端的 drill_main.html 使用
+                localStorage.setItem('drillTeams', JSON.stringify(teamsToSend)); // 使用 teamsToSend
                 localStorage.setItem('currentDrillCaseId', caseId); 
                 localStorage.setItem('currentLobbyId', currentLobbyId); // 保存LobbyId
                 
-                console.log('[LOBBY.JS] 存储到localStorage的队伍数据:', JSON.parse(JSON.stringify(drillTeams)));
-                console.log(`[LOBBY.JS] 准备跳转到 drill_main.html?caseId=${caseId}&lobbyId=${currentLobbyId}`);
+                console.log('[LOBBY.JS] 存储到localStorage的队伍数据:', JSON.parse(JSON.stringify(teamsToSend)));
                 
-                socket.emit('teacherStartsDrill', { lobbyId: currentLobbyId, caseId: caseId, teamsData: drillTeams });
+                // 【关键修改点：通过 WebSocket 向后端发送 'teacherStartsDrill' 事件，使用 teamsToSend】
+                socket.emit('teacherStartsDrill', { lobbyId: currentLobbyId, caseId: caseId, teamsData: teamsToSend }); // 使用 teamsToSend
+                console.log(`[LOBBY.JS] 已发送 'teacherStartsDrill' 事件，lobbyId: ${currentLobbyId}, caseId: ${caseId}`);
+
+                // 教师端自己也需要跳转到推演主界面
                 window.location.href = `drill_main.html?caseId=${caseId}&lobbyId=${currentLobbyId}`; // 跳转时带上lobbyId
             } else {
                 let alertMsg = "无法开始推演：";
-                if (currentTeamsData.length === 0) alertMsg += "至少需要一个队伍加入。 ";
+                if (teamsToSend.length === 0) alertMsg += "至少需要一个队伍加入。 "; // 现在会包含教师演示队伍
                 if (!currentLobbyId) alertMsg += "大厅ID无效或未成功创建。 ";
                 if (!caseId) alertMsg += "案例ID无效。 ";
                 alert(alertMsg);

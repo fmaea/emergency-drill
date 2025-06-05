@@ -41,6 +41,7 @@ document.addEventListener('DOMContentLoaded', () => {
         .then(data => {
             if (caseTitleElement) {
                 if (data && data.title) {
+                    // 确保移除所有 [cite: X] 标记，并去除首尾空格
                     caseTitleElement.textContent = `案例: ${data.title.replace(/\[cite: \d+\]/g, '').trim()}`;
                 } else {
                     caseTitleElement.textContent = `案例 (ID: ${caseId}) 信息已加载`;
@@ -58,7 +59,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
 
     // 3. 设置 WebSocket 连接
-    const socket = io(window.location.protocol + '//' + window.location.hostname + ':7890', {
+    const socket = io('http://localhost:7890', {
         transports: ['websocket']
     });
 
@@ -96,6 +97,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
     
+    // 成功加入大厅事件
     socket.on('joinSuccess', (data) => {
         console.log('[JOIN.JS] 成功加入大厅:', data);
         if (statusMessage) {
@@ -104,18 +106,20 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         if (joinButton) {
             joinButton.textContent = '已成功加入！';
-            joinButton.disabled = true;
+            joinButton.disabled = true; // 禁用按钮，避免重复点击
             joinButton.classList.remove('bg-cyan-600', 'hover:bg-cyan-700', 'bg-yellow-500');
             joinButton.classList.add('bg-green-600', 'cursor-not-allowed');
         }
+        // 禁用输入框
         if (teamNameInput) teamNameInput.disabled = true;
         if (studentNameInput) studentNameInput.disabled = true;
 
-        localStorage.setItem('currentStudentTeamId', data.teamId);
-        localStorage.setItem('currentLobbyId', data.lobbyId); // Storing lobbyId received on successful join
-        if (studentNameInput) {
-            localStorage.setItem('currentStudentName', studentNameInput.value.trim());
+        // 保存当前学生所属的队伍ID到 localStorage
+        if (data.teamId) {
+            localStorage.setItem('myTeamId', data.teamId); // 新增行
+            console.log(`[JOIN.JS] 已保存我的队伍ID: ${data.teamId}`);
         }
+        // 重要：这里不再直接跳转，等待教师的开始指令
     });
 
     socket.on('joinFailed', (data) => {
@@ -141,41 +145,32 @@ document.addEventListener('DOMContentLoaded', () => {
         if (joinButton) joinButton.disabled = true;
     });
 
+    // 监听 'drillHasStarted' 事件并进行跳转
     socket.on('drillHasStarted', (data) => {
-        console.log('[JOIN.JS] Received drillHasStarted event:', data);
-        if (statusMessage) {
-            statusMessage.textContent = '推演已开始！正在进入推演界面...';
-            statusMessage.className = 'text-center text-green-500 mt-4 h-4';
-        }
+        console.log('[JOIN.JS] 收到服务器通知：推演已开始！正在跳转到推演界面。', data);
+        const { caseId, lobbyId, teamsData } = data;
 
-        // Ensure necessary data is present
-        if (data.caseId && data.lobbyId && data.teamsData) {
-            localStorage.setItem('currentDrillCaseId', data.caseId);
-            // currentLobbyId might have been set by joinSuccess, but data.lobbyId from teacher is authoritative here
-            localStorage.setItem('currentLobbyId', data.lobbyId); 
-            localStorage.setItem('drillTeams', JSON.stringify(data.teamsData));
-            
-            // Retrieve student's own teamId and name if stored previously by joinSuccess
-            const studentTeamId = localStorage.getItem('currentStudentTeamId');
-            const studentName = localStorage.getItem('currentStudentName');
-
-            // Optionally, find this student's team in teamsData to confirm they are part of it
-            const myTeam = data.teamsData.find(team => team.id === studentTeamId);
+        // 将从服务器接收到的最新团队数据保存到 localStorage
+        if (teamsData) {
+            localStorage.setItem('drillTeams', JSON.stringify(teamsData));
+            // 再次确保保存当前客户端的队伍ID，因为 teamsData 中可能有 myTeamId
+            // 这里的 studentNameInput.value 应该在 joinSuccess 后仍然可用
+            const currentStudentName = studentNameInput.value.trim();
+            const myTeam = teamsData.find(t => t.students.includes(currentStudentName)); 
             if (myTeam) {
-                console.log(`[JOIN.JS] Student ${studentName} (Team ID: ${studentTeamId}) is part of the starting drill.`);
+                localStorage.setItem('myTeamId', myTeam.id);
             } else {
-                console.warn(`[JOIN.JS] Student's team (ID: ${studentTeamId}) not found in teamsData from teacher. Proceeding anyway.`);
-            }
-
-            // Navigate to the drill page
-            window.location.href = `drill_main.html?caseId=${data.caseId}&lobbyId=${data.lobbyId}`;
-        } else {
-            console.error('[JOIN.JS] drillHasStarted event received insufficient data:', data);
-            if (statusMessage) {
-                statusMessage.textContent = '启动推演信息不完整，无法自动跳转。';
-                statusMessage.className = 'text-center text-red-500 mt-4 h-4';
+                console.warn(`[JOIN.JS] 在 drillHasStarted 中未能通过学生姓名找到队伍ID。`);
             }
         }
+        localStorage.setItem('currentDrillCaseId', caseId);
+        localStorage.setItem('currentLobbyId', lobbyId);
+
+        // 执行跳转到 drill_main.html，带上案例ID、LobbyId，以及队伍名称和学生名称
+        // 传递 teamName 和 studentName 到 URL 参数，以帮助 drill.js 识别当前客户端的队伍
+        const teamNameParam = encodeURIComponent(teamNameInput.value.trim());
+        const studentNameParam = encodeURIComponent(studentNameInput.value.trim());
+        window.location.href = `drill_main.html?caseId=${caseId}&lobbyId=${lobbyId}&teamName=${teamNameParam}&studentName=${studentNameParam}`;
     });
 
     // 4. 处理“确认加入”按钮的点击事件
@@ -185,7 +180,11 @@ document.addEventListener('DOMContentLoaded', () => {
             const studentName = studentNameInput.value.trim();
 
             if (!teamName || !studentName) {
-                alert('队伍名称和你的名字都不能为空！');
+                // 替换 alert 为更友好的 UI 提示
+                if (statusMessage) {
+                    statusMessage.textContent = '队伍名称和你的名字都不能为空！';
+                    statusMessage.className = 'text-center text-red-400 mt-4 h-4';
+                }
                 return;
             }
 
@@ -198,7 +197,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 statusMessage.className = 'text-center text-yellow-400 mt-4 h-4';
             }
 
-            // 【修改】发送的数据中不再包含 lobbyId
+            // 发送加入请求的数据
             const joinData = {
                 caseId: caseId,      // 从URL获取
                 teamName: teamName,

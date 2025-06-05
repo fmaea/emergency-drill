@@ -22,129 +22,44 @@ document.addEventListener('DOMContentLoaded', async function () {
     let currentCaseData = null;  
     let timerInterval;
     let isPaused = false;
-    // let socket = null; // WebSocket 实例 (当前版本未启用) - Will be initialized
+    let socket = null; // WebSocket 实例
     window.drillMap = null; // 高德地图实例 (如果案例需要)
 
-    let teamsData = []; // 存储队伍信息，将从localStorage加载
-    // 【修改】假设教师端操作的是第一个实际队伍的视角进行答题和计分模拟
-    let currentOperatingTeamId = null; 
+    let teamsData = []; // 存储队伍信息，将从localStorage加载，但最终以服务器同步为准
+    let currentLobbyId = null; // 从URL获取的Lobby ID
+    let myTeamId = null; // 当前客户端所属的队伍ID (主要用于学生端或教师端演示队伍)
 
-    // At the top with other state variables:
-     let socket; 
-     let currentStudentTeamId = null;
-     let currentLobbyId = null;
-     let dbCaseId = null; // To avoid confusion with urlParams.get('caseId') which might be just 'caseId' string
-     let isTeacher = false; // We need a way to determine if the user is a teacher
+    let isTeamsDataSynced = false; // 标记WebSocket是否已接收到首次teamsUpdated
 
     // --- 3. 页面启动逻辑 ---
     const urlParams = new URLSearchParams(window.location.search);
     const caseId = urlParams.get('caseId');
+    currentLobbyId = urlParams.get('lobbyId'); // 获取 Lobby ID
 
     if (!caseId) {
         handleFatalError("错误：URL中未找到caseId，请从案例库进入。");
         return;
     }
+    if (!currentLobbyId) {
+        handleFatalError("错误：URL中未找到lobbyId，请通过正确流程加入。");
+        return;
+    }
 
     try {
-        // Inside the main DOMContentLoaded try block, after fetching caseId from URL:
-        dbCaseId = caseId; // Store the actual caseId from URL params
-        currentStudentTeamId = localStorage.getItem('currentStudentTeamId');
-        currentLobbyId = localStorage.getItem('currentLobbyId');
-        
-        // Determine if user is teacher - simplistic way for now, can be refined
-        // A more robust way would be a flag from localStorage set at login, or a server-verified role
-        if (!currentStudentTeamId && localStorage.getItem('token')) { // Assuming only teachers have a 'token'
-            isTeacher = true;
-            console.log('[DRILL.JS] Running as Teacher.');
-        } else {
-            console.log(`[DRILL.JS] Running as Student. Team ID: ${currentStudentTeamId}, Lobby ID: ${currentLobbyId}`);
-        }
-
-        socket = io(window.location.protocol + '//' + window.location.hostname + ':7890', { transports: ['websocket'] });
-
-        socket.on('connect', () => {
-            console.log('[DRILL.JS] Connected to WebSocket server:', socket.id);
-            if (currentLobbyId) {
-                socket.emit('clientJoinsDrillRoom', { lobbyId: currentLobbyId });
-                console.log(`[DRILL.JS] Sent clientJoinsDrillRoom for lobby: ${currentLobbyId}`);
-            }
-        });
-
-        socket.on('connect_error', (error) => {
-            console.error('[DRILL.JS] WebSocket connection error:', error);
-        });
-
-        // Placeholder for future listeners like 'advanceToStage', 'scoresUpdated'
-        socket.on('advanceToStage', (data) => {
-           console.log('[DRILL.JS] Received advanceToStage event:', data);
-           if (!isTeacher) { // Students advance based on server command
-               setActiveStage(data.nextStageIndex);
-           }
-        });
-
-        socket.on('scoresUpdated', (updatedTeamsData) => {
-            console.log('[DRILL.JS] Received scoresUpdated event:', updatedTeamsData);
-            teamsData = updatedTeamsData; // Update local teamsData with server's authoritative state
-            updateLeaderboard(); // Re-render the leaderboard
-        });
-
-        socket.on('drillCompleted', (data) => {
-            console.log('[DRILL.JS] Received drillCompleted event:', data);
-            // Update local teamsData one last time
-            if (data.finalTeamsData) {
-                teamsData = data.finalTeamsData;
-                updateLeaderboard();
-            }
-            
-            // Display a message and prepare for results page
-            alert('本次推演已正式结束！点击“确定”查看最终结果。');
-            
-            // Save final data for results page (teacher might have already done part of this)
-            localStorage.setItem('drillResults', JSON.stringify(teamsData));
-            if (currentCaseData && currentCaseData.title) { // currentCaseData should be loaded
-                localStorage.setItem('currentCaseTitle', currentCaseData.title.replace(/\\/g, '').trim());
-            } else if (dbCaseId) { // Fallback if currentCaseData is not fully loaded but we have the ID
-                // Attempt to get title from existing lobby data if available, or just use ID
-                const storedCaseTitle = teamsData.length > 0 ? (teamsData[0].caseTitle || dbCaseId) : dbCaseId;
-                localStorage.setItem('currentCaseTitle', storedCaseTitle);
-            }
-
-            // Navigate to results page
-            // Ensure forceEndBtn is available or construct the URL
-            if (forceEndBtn && forceEndBtn.href && isTeacher) { // Teachers might use their existing button's URL
-                 window.location.href = forceEndBtn.href;
-            } else { // Students or fallback
-                 window.location.href = `results.html?caseId=${dbCaseId}`;
-            }
-        });
-
-        // 从localStorage加载队伍信息
+        // 从localStorage加载teamsData作为初始值，但最终会由服务器同步覆盖
         const storedTeams = localStorage.getItem('drillTeams');
         if (storedTeams) {
             teamsData = JSON.parse(storedTeams);
-            teamsData.forEach(team => { // 确保每个队伍对象都有score和answers属性
+            teamsData.forEach(team => { 
                 if (team.score === undefined) team.score = 0;
                 if (team.answers === undefined) team.answers = {};
             });
-            // 【修改】如果队伍存在，默认操作第一个队伍 (如果不是占位符)
-            const firstActualTeam = teamsData.find(t => t.id !== 'placeholder' && t.id !== 'no-teams');
-            if (firstActualTeam) {
-                currentOperatingTeamId = firstActualTeam.id;
-            }
-            console.log('[DRILL] 从localStorage加载的队伍数据:', JSON.parse(JSON.stringify(teamsData)));
         } else {
-            teamsData = [{id: 'placeholder', name: "等待队伍加入...", score: 0, answers: {}}];
             console.warn("[DRILL] 未能从localStorage加载队伍信息。");
         }
-        if (teamsData.filter(t => t.id !== 'placeholder' && t.id !== 'no-teams').length === 0) { 
-             // 如果过滤后没有真实队伍，可以添加一个默认的教师操作队伍
-            if (!teamsData.find(t => t.id === 'teacher_ops_team')) { // 避免重复添加
-                const teacherTeam = {id: 'teacher_ops_team', name: "教师演示", score: 0, answers: {}};
-                teamsData.push(teacherTeam);
-                if (!currentOperatingTeamId) currentOperatingTeamId = teacherTeam.id;
-            }
-        }
-
+        
+        // 【关键修改】: 确定 myTeamId 并确保其在 teamsData 中
+        setupMyTeamIdForClient();
 
         const response = await fetch(`http://localhost:7890/api/cases/${caseId}`);
         if (!response.ok) throw new Error(`获取案例数据失败，状态: ${response.status}`);
@@ -152,15 +67,7 @@ document.addEventListener('DOMContentLoaded', async function () {
         console.log('成功获取案例数据:', JSON.parse(JSON.stringify(currentCaseData)));
         
         initializeDrillUI(currentCaseData);
-        // initializeWebSocket(); // WebSocket相关功能，待后续集成
-
-        // Conditional UI for Teacher/Student (placed after DOM elements are defined, but functionally here)
-        if (!isTeacher) {
-            if (nextStageBtn) nextStageBtn.style.display = 'none';
-            if (pauseBtn) pauseBtn.style.display = 'none';
-            // forceEndBtn might also be hidden for students, or re-purposed to "Exit"
-            if (forceEndBtn) forceEndBtn.style.display = 'none'; 
-        }
+        initializeWebSocket(); // 初始化 WebSocket
         
     } catch (error) {
         handleFatalError(error.message);
@@ -174,6 +81,172 @@ document.addEventListener('DOMContentLoaded', async function () {
         if (pauseBtn) pauseBtn.disabled = true;
     }
 
+    // 【关键修改】: 辅助函数：设置当前客户端的队伍ID
+    function setupMyTeamIdForClient() {
+        const storedMyTeamId = localStorage.getItem('myTeamId');
+        const studentNameFromUrl = urlParams.get('studentName');
+        const teamNameFromUrl = urlParams.get('teamName');
+
+        let isTeacherClient = false;
+        // 尝试通过URL参数判断是否为学生端，否则默认为教师端
+        if (!studentNameFromUrl || !teamNameFromUrl) {
+            isTeacherClient = true;
+        }
+
+        // 优先级1: 如果 myTeamId 已经设置且在当前 teamsData 中找到
+        if (storedMyTeamId) {
+            const foundTeam = teamsData.find(t => t.id === storedMyTeamId);
+            if (foundTeam) {
+                myTeamId = storedMyTeamId;
+                console.log(`[DRILL] 从localStorage识别队伍ID: ${myTeamId}`);
+                return; // 找到并验证成功，直接返回
+            } else {
+                console.warn(`[DRILL] localStorage中的myTeamId (${storedMyTeamId}) 未在当前teamsData中找到，可能数据已过期或队伍已解散。`);
+            }
+        }
+
+        // 优先级2: 如果是学生端（通过URL参数判断），尝试在 teamsData 中查找
+        if (!isTeacherClient) {
+            const studentTeam = teamsData.find(t => t.name === teamNameFromUrl && t.students.includes(studentNameFromUrl));
+            if (studentTeam) {
+                myTeamId = studentTeam.id;
+                localStorage.setItem('myTeamId', myTeamId);
+                console.log(`[DRILL] 从URL参数识别为学生端，队伍ID: ${myTeamId}`);
+                return;
+            } else {
+                console.warn("[DRILL] 无法通过URL参数找到匹配的队伍，这可能是由于teamsData尚未完全同步，或者URL参数不匹配。");
+            }
+        }
+
+        // 优先级3: 默认处理为教师端（使用教师演示队伍ID）
+        myTeamId = 'teacher_ops_team'; 
+        localStorage.setItem('myTeamId', myTeamId); 
+        console.log("[DRILL] 未识别到特定队伍，默认为教师端或新会话，使用教师演示队伍ID:", myTeamId);
+
+        // 【新增逻辑】：确保无论 myTeamId 是什么，它对应的队伍对象在本地 `teamsData` 中存在
+        // 这对于 `teacher_ops_team` 尤其重要，因为它可能在 `drillTeams` 第一次加载时不存在
+        let currentMyTeamObject = teamsData.find(t => t.id === myTeamId);
+        if (!currentMyTeamObject) {
+            // 如果 myTeamId 是 'teacher_ops_team' 且它不在当前 teamsData 中，则添加
+            if (myTeamId === 'teacher_ops_team') {
+                const newTeacherTeam = {id: 'teacher_ops_team', name: "教师演示", students: [], score: 0, answers: {}};
+                teamsData.push(newTeacherTeam); // 将新创建的教师演示队伍添加到本地的 teamsData 数组中
+                console.log("[DRILL] 教师演示队伍未在本地teamsData中找到，已添加。");
+            } else {
+                // 如果 myTeamId 是一个学生队伍ID但找不到对象，这表示严重不一致
+                console.error(`[DRILL] 严重错误：myTeamId (${myTeamId}) 无法在本地teamsData中找到对应队伍。可能需要重新加载。`);
+                if (nextStageBtn) {
+                    nextStageBtn.disabled = true;
+                    nextStageBtn.classList.remove('bg-cyan-600', 'hover:bg-cyan-700');
+                    nextStageBtn.classList.add('bg-red-500', 'cursor-not-allowed');
+                    nextStageBtn.textContent = '队伍数据错误';
+                }
+            }
+        }
+    }
+
+
+    // 【新增函数：初始化 WebSocket 连接和监听事件】
+    function initializeWebSocket() {
+        socket = io('http://localhost:7890', {
+            transports: ['websocket']
+        });
+
+        socket.on('connect', () => {
+            console.log('[DRILL.JS] 连接到 WebSocket 服务器:', socket.id);
+            socket.emit('joinDrillRoom', currentLobbyId); 
+        });
+
+        socket.on('disconnect', (reason) => {
+            console.warn('[DRILL.JS] WebSocket 连接断开:', reason);
+        });
+
+        socket.on('connect_error', (error) => {
+            console.error('[DRILL.JS] WebSocket 连接错误:', error);
+        });
+
+        // 【关键修改】: 接收队伍数据更新
+        socket.on('teamsUpdated', (updatedTeams) => {
+            console.log('[DRILL.JS] 收到队伍数据更新:', updatedTeams);
+            teamsData = updatedTeams; 
+            updateLeaderboard();
+
+            // 【重要】：在收到teamsUpdated后，检查myTeamId对应的队伍是否在更新后的teamsData中
+            const myCurrentTeamInUpdatedData = teamsData.find(t => t.id === myTeamId);
+            if (!myCurrentTeamInUpdatedData) {
+                console.warn(`[DRILL.JS] 收到更新后，myTeamId (${myTeamId}) 对应的队伍在teamsData中仍未找到。尝试重新设置 myTeamId。`);
+                // 再次调用 setupMyTeamIdForClient 来尝试修复 myTeamId
+                setupMyTeamIdForClient(); 
+            }
+
+            // 首次同步后，启用提交按钮
+            if (!isTeamsDataSynced) {
+                isTeamsDataSynced = true;
+                // 再次检查 myTeamId 对应的队伍是否在同步数据中存在
+                const finalMyTeamCheck = teamsData.find(t => t.id === myTeamId);
+                if (finalMyTeamCheck) {
+                    if (nextStageBtn) {
+                        nextStageBtn.disabled = false;
+                        nextStageBtn.classList.remove('bg-gray-500', 'cursor-not-allowed');
+                        nextStageBtn.classList.add('bg-cyan-600', 'hover:bg-cyan-700');
+                        console.log("[DRILL.JS] 队伍数据已同步，提交按钮已启用。");
+                    }
+                } else {
+                    console.error(`[DRILL.JS] 最终检查：myTeamId (${myTeamId}) 对应的队伍在teamsData中仍然不存在。提交按钮保持禁用。`);
+                    if (nextStageBtn) {
+                        nextStageBtn.disabled = true;
+                        nextStageBtn.classList.remove('bg-cyan-600', 'hover:bg-cyan-700');
+                        nextStageBtn.classList.add('bg-red-500', 'cursor-not-allowed');
+                        nextStageBtn.textContent = '队伍加载失败';
+                    }
+                }
+            }
+        });
+
+        // 【关键修改】: 接收下一阶段指令
+        socket.on('advanceToStage', (data) => {
+            const { nextStageIndex } = data;
+            console.log(`[DRILL.JS] 收到进入下一阶段指令: ${nextStageIndex}`);
+            if (currentStageIndex < currentCaseData.stages.length - 1) {
+                setActiveStage(nextStageIndex);
+                // 阶段推进后，重新启用提交按钮（对于学生端和教师端）
+                if (nextStageBtn) { // 无论是教师端还是学生端，收到推进指令后都应启用按钮
+                    nextStageBtn.disabled = false;
+                    if (myTeamId === 'teacher_ops_team') {
+                        nextStageBtn.textContent = (currentStageIndex >= currentCaseData.stages.length - 1) ? "完成推演" : "提交并进入下一阶段";
+                    } else {
+                        nextStageBtn.textContent = '提交本阶段决策';
+                    }
+                    nextStageBtn.classList.remove('bg-gray-500', 'cursor-not-allowed');
+                    nextStageBtn.classList.add('bg-cyan-600', 'hover:bg-cyan-700');
+                }
+            } else {
+                proceedToNextStageOrEnd();
+            }
+        });
+
+        socket.on('answerSubmissionSuccess', (data) => {
+            console.log('[DRILL.JS] 答案提交成功:', data.message);
+            if (myTeamId !== 'teacher_ops_team' && nextStageBtn) { // 仅学生端显示此状态
+                 nextStageBtn.textContent = '答案已提交，等待教师操作...';
+                 nextStageBtn.disabled = true;
+                 nextStageBtn.classList.remove('bg-cyan-600', 'hover:bg-cyan-700');
+                 nextStageBtn.classList.add('bg-gray-500', 'cursor-not-allowed');
+            }
+        });
+
+        socket.on('answerSubmissionFailed', (data) => {
+            console.error('[DRILL.JS] 答案提交失败:', data.message);
+            alert(`答案提交失败: ${data.message}`);
+            if (myTeamId !== 'teacher_ops_team' && nextStageBtn) {
+                nextStageBtn.disabled = false;
+                nextStageBtn.textContent = '提交本阶段决策';
+                nextStageBtn.classList.remove('bg-gray-500', 'cursor-not-allowed');
+                nextStageBtn.classList.add('bg-cyan-600', 'hover:bg-cyan-700');
+            }
+        });
+    }
+
     // --- 4. UI和计时器初始化 ---
     function initializeDrillUI(caseData) {
         if (!caseData || !caseData.title) {
@@ -183,8 +256,8 @@ document.addEventListener('DOMContentLoaded', async function () {
         if (headerCaseTitleElement) headerCaseTitleElement.textContent = `案例: ${caseData.title.replace(/\[cite: \d+\]/g, '').trim()}`;
         if (forceEndBtn) forceEndBtn.href = `results.html?caseId=${caseId}`;
         
-        startTimer(caseData.estimatedTime ? caseData.estimatedTime * 60 : 180 * 60); // 默认180分钟
-        updateLeaderboard(); // 初始化排行榜显示
+        startTimer(caseData.estimatedTime ? caseData.estimatedTime * 60 : 180 * 60); 
+        updateLeaderboard(); 
         
         if (caseData.stages && caseData.stages.length > 0) {
             setActiveStage(0);
@@ -201,8 +274,6 @@ document.addEventListener('DOMContentLoaded', async function () {
                 if (timer < 0) {
                     clearInterval(timerInterval);
                     if (timerElement) timerElement.textContent = "时间到";
-                    // 可选：时间到自动提交并进入下一阶段
-                    // calculateScoresAndProceed(); 
                 } else {
                     const minutes = Math.floor(timer / 60);
                     const seconds = timer % 60;
@@ -229,12 +300,11 @@ document.addEventListener('DOMContentLoaded', async function () {
         }
 
         stagePanels.forEach((panel, index) => {
-            if (panel) { // 确保panel元素存在
+            if (panel) {
                 panel.classList.toggle('stage-active', index === stageIndex);
             }
         });
 
-        // 确保只对当前激活的面板进行渲染
         if (stagePanels[stageIndex]) {
             renderStageContent(stagePanels[stageIndex], stageData);
         } else {
@@ -242,7 +312,24 @@ document.addEventListener('DOMContentLoaded', async function () {
         }
 
         if (nextStageBtn) {
-            nextStageBtn.innerHTML = (stageIndex >= currentCaseData.stages.length - 1) ? "完成推演" : "提交并进入下一阶段";
+            // 每次进入新阶段时，根据 isTeamsDataSynced 状态和客户端类型来设置按钮状态
+            if (!isTeamsDataSynced) { // 如果队伍数据尚未同步，按钮保持禁用
+                nextStageBtn.disabled = true; 
+                nextStageBtn.classList.remove('bg-cyan-600', 'hover:bg-cyan-700');
+                nextStageBtn.classList.add('bg-gray-500', 'cursor-not-allowed');
+            } else { // 队伍数据已同步，根据客户端类型设置按钮文本和启用状态
+                nextStageBtn.disabled = false;
+                nextStageBtn.classList.remove('bg-gray-500', 'cursor-not-allowed');
+                nextStageBtn.classList.add('bg-cyan-600', 'hover:bg-cyan-700');
+            }
+            
+            if (myTeamId === 'teacher_ops_team') { 
+                 nextStageBtn.style.display = 'block'; 
+                 nextStageBtn.innerHTML = (stageIndex >= currentCaseData.stages.length - 1) ? "完成推演" : "提交并进入下一阶段";
+            } else {
+                 nextStageBtn.style.display = 'block'; 
+                 nextStageBtn.innerHTML = '提交本阶段决策';
+            }
         }
     }
 
@@ -274,7 +361,7 @@ document.addEventListener('DOMContentLoaded', async function () {
         
         const imageUrl = stageData.stageBackgroundImageUrl || stageData.overlayImageUrl; 
 
-        // 图片渲染逻辑
+        // 图片渲染逻辑 (保持不变)
         if (stageData.stageNumber === 1) {
             const eventTitle = panelElement.querySelector('.stage-event-title');
             if (eventTitle && currentCaseData) eventTitle.textContent = `事件：${currentCaseData.title.replace(/\[cite: \d+\]/g, '').trim()}`;
@@ -298,7 +385,7 @@ document.addEventListener('DOMContentLoaded', async function () {
             if (backgroundHost) {
                 if (imageUrl) {
                     backgroundHost.style.backgroundImage = `url('${imageUrl}')`;
-                } else if (stageData.questions && stageData.questions[0] && stageData.questions[0].assetUrl && stageData.stageNumber === 3) {
+                } else if (stageData.questions && stageData.questions[0] && stageData.questions[0].assetUrl && stageData.questions[0].assetUrl.includes('chart.png')) { // Check for chart.png specifically
                     backgroundHost.style.backgroundImage = `url('${stageData.questions[0].assetUrl}')`;
                 } else {
                     backgroundHost.style.backgroundImage = 'none';
@@ -342,13 +429,14 @@ document.addEventListener('DOMContentLoaded', async function () {
                             if (question.questionType === 'Binary-Decision' && stageData.stageNumber === 4) {
                                 const button = document.createElement('button');
                                 button.className = `px-8 md:px-12 py-3 md:py-4 text-md md:text-lg font-bold text-white rounded-lg shadow-lg transform hover:scale-105 transition-all ${optIndex === 0 ? 'bg-green-600 hover:bg-green-700' : 'ml-4 bg-red-600 hover:bg-red-700'}`;
-                                button.innerHTML = `<i class="fas ${optIndex === 0 ? 'fa-check-circle' : 'fa-times-circle'} mr-2"></i>${opt.text.replace(/\[cite: \d+\]/g, '').trim()}`;
-                                button.dataset.value = opt.text.replace(/"/g, '&quot;');
+                                button.innerHTML = `<i class="fas ${optIndex === 0 ? 'fa-check-circle' : 'fa-times-circle'} mr-2"></i>${opt.text.replace(/"/g, '&quot;').trim()}`; // Trim here too
+                                button.dataset.value = opt.text.replace(/"/g, '&quot;').trim(); // Trim here too
                                 button.addEventListener('click', (event) => {
                                     const buttonsInQuestion = event.target.closest('.question-item').querySelectorAll('button');
                                     buttonsInQuestion.forEach(btn => btn.classList.remove('ring-2', 'ring-offset-2', 'ring-cyan-500'));
                                     event.target.classList.add('ring-2', 'ring-offset-2', 'ring-cyan-500');
-                                    handleAnswerSelection(currentOperatingTeamId, stageData.stageNumber, qIndex, question.questionType, event.target);
+                                    // 传递 myTeamId 
+                                    handleAnswerSelection(myTeamId, stageData.stageNumber, qIndex, question.questionType, event.target);
                                 });
                                 optionsDiv.appendChild(button);
                             } else {
@@ -361,10 +449,11 @@ document.addEventListener('DOMContentLoaded', async function () {
                                 inputElement.type = inputType;
                                 inputElement.name = questionId; 
                                 inputElement.id = optionFullId;
-                                inputElement.value = opt.text.replace(/"/g, '&quot;');
+                                inputElement.value = opt.text.replace(/"/g, '&quot;').trim(); // Trim here too
                                 inputElement.className = 'mr-3 accent-cyan-500 align-middle';
                                 inputElement.addEventListener('change', (event) => {
-                                    handleAnswerSelection(currentOperatingTeamId, stageData.stageNumber, qIndex, question.questionType, event.target);
+                                    // 传递 myTeamId
+                                    handleAnswerSelection(myTeamId, stageData.stageNumber, qIndex, question.questionType, event.target);
                                 });
 
                                 label.appendChild(inputElement);
@@ -428,146 +517,165 @@ document.addEventListener('DOMContentLoaded', async function () {
         }
     }
     
-    
-    function handleAnswerSelection(operatingTeamIdForTeacher, stageNum, questionIndex, questionType, targetElement) {
+    function handleAnswerSelection(teamId, stageNum, questionIndex, questionType, targetElement) {
+        if (!teamId) {
+            console.warn("无法记录答案：当前操作的队伍ID未设定。");
+            return;
+        }
+        // 直接在 teamsData 中找到对应的 team 对象
+        const team = teamsData.find(t => t.id === teamId);
+        if (!team) {
+            console.warn(`未找到团队ID: ${teamId}，无法记录答案。`);
+            return;
+        }
+
         const questionKey = `s${stageNum}-q${questionIndex}`;
         let selectedValue = targetElement.value;
-        if (targetElement.tagName === 'BUTTON' && targetElement.dataset.value) {
-            selectedValue = targetElement.dataset.value;
+        // 确保值是字符串，并且去除首尾空格
+        if (typeof selectedValue === 'string') {
+            selectedValue = selectedValue.trim();
         }
 
-        let answerData;
-        // For multi-choice, collect all checked values if it's a student action
-        if (!isTeacher && questionType === 'MultipleChoice-Multi') {
-            const optionsContainer = targetElement.closest('.question-options');
-            const checkedInputs = optionsContainer.querySelectorAll('input[type="checkbox"]:checked');
-            answerData = Array.from(checkedInputs).map(input => input.value);
-        } else {
-            answerData = [selectedValue]; // Keep as array for consistency
-        }
-
-        if (!isTeacher && currentStudentTeamId && currentLobbyId && dbCaseId && socket) {
-            // Student submits answer
-            console.log(`[DRILL.JS] Student ${currentStudentTeamId} submitting answer for ${questionKey}:`, answerData);
-            socket.emit('studentSubmitAnswer', {
-                lobbyId: currentLobbyId,
-                caseId: dbCaseId,
-                questionKey: questionKey,
-                answerData: answerData,
-                teamId: currentStudentTeamId,
-                stageNumber: stageNum, // Send stage number for context
-                questionIndex: questionIndex // Send question index for context
-            });
-        } else if (isTeacher && operatingTeamIdForTeacher) {
-            // Teacher's existing logic to update local teamsData (if they are still operating a team for demo)
-            // This part might be removed or changed depending on teacher's role in an actual multi-student drill
-            const team = teamsData.find(t => t.id === operatingTeamIdForTeacher);
-            if (team) {
-                if (questionType === 'MultipleChoice-Multi') {
-                    if (!team.answers[questionKey] || !Array.isArray(team.answers[questionKey])) {
-                        team.answers[questionKey] = [];
-                    }
-                    const currentValueIndex = team.answers[questionKey].indexOf(selectedValue); // selectedValue here is the single option clicked
-                    if (targetElement.checked) {
-                        if (currentValueIndex === -1) team.answers[questionKey].push(selectedValue);
-                    } else {
-                        if (currentValueIndex > -1) team.answers[questionKey].splice(currentValueIndex, 1);
-                    }
-                } else {
-                    team.answers[questionKey] = answerData; // answerData is [selectedValue]
-                }
-                console.log(`[DRILL.JS] Teacher operating for team ${team.name} (${team.id}) on ${questionKey}, answers:`, team.answers[questionKey]);
+        if (questionType === 'MultipleChoice-Multi') {
+            if (!team.answers[questionKey] || !Array.isArray(team.answers[questionKey])) {
+                team.answers[questionKey] = [];
             }
+            const currentValueIndex = team.answers[questionKey].indexOf(selectedValue);
+            if (targetElement.checked) { 
+                if (currentValueIndex === -1) { 
+                    team.answers[questionKey].push(selectedValue);
+                }
+            } else { 
+                if (currentValueIndex > -1) {
+                    team.answers[questionKey].splice(currentValueIndex, 1);
+                }
+            }
+        } else { 
+            team.answers[questionKey] = [selectedValue]; 
         }
+        console.log(`团队 ${team.name} (${team.id}) 在 ${questionKey} 的答案更新为:`, team.answers[questionKey]);
     }
 
+    // 【关键修改点：calculateScoresAndProceed 函数现在负责发送答案到服务器】
     function calculateScoresAndProceed() {
         const stageData = currentCaseData.stages[currentStageIndex];
         if (!stageData || !stageData.questions) {
             console.warn("无法计分：当前阶段数据或问题数据缺失。");
-            proceedToNextStageOrEnd();
             return;
         }
 
-        teamsData.forEach(team => {
-            if(team.id === 'placeholder' || team.id === 'no-teams') return; 
-            // 【修改】确保只为当前操作的队伍（或所有队伍，如果需要）计分
-            if (!currentOperatingTeamId || team.id !== currentOperatingTeamId) {
-                 // 如果您希望所有队伍都根据教师端的选择（或一个预设答案）计分，
-                 // 您需要修改这里的逻辑，或者从服务器获取每个队伍的答案。
-                 // 当前，只有 currentOperatingTeamId 的答案会被记录和计分。
-                 // 为了演示，我们也可以让所有队伍都获得分数。
-                 // return; // 如果只想为操作的队伍计分，取消此注释
+        const myCurrentTeam = teamsData.find(t => t.id === myTeamId);
+        if (!myCurrentTeam) {
+            console.error("当前客户端所属队伍未找到！无法提交答案或计算分数。请刷新页面或重新加入大厅。");
+            alert("错误：您的队伍信息丢失，请重新加入！"); // 使用 alert 进行提示
+            if (nextStageBtn) { // 禁用按钮防止重复点击
+                nextStageBtn.disabled = true;
+                nextStageBtn.classList.remove('bg-cyan-600', 'hover:bg-cyan-700');
+                nextStageBtn.classList.add('bg-red-500', 'cursor-not-allowed');
             }
+            return;
+        }
 
-
-            let stageScoreForTeam = 0;
-            stageData.questions.forEach((question, qIndex) => {
-                const questionKey = `s${stageData.stageNumber}-q${qIndex}`;
-                const correctOptions = (question.answerOptions || [])
-                                        .filter(opt => opt.isCorrect === true) 
-                                        .map(opt => opt.text.replace(/"/g, '&quot;'));
-                
-                // 【修改】确保team.answers存在才访问
-                const teamAnswersForQuestion = team.answers && team.answers[questionKey] ? team.answers[questionKey] : [];
-
-
-                let isCorrectForThisQuestion = false;
-                if (correctOptions.length > 0) { 
-                    if (question.questionType === 'MultipleChoice-Multi') {
-                        isCorrectForThisQuestion = teamAnswersForQuestion.length === correctOptions.length && 
-                                               correctOptions.every(co => teamAnswersForQuestion.includes(co)) &&
-                                               teamAnswersForQuestion.every(ta => correctOptions.includes(ta));
-                    } else { 
-                        isCorrectForThisQuestion = teamAnswersForQuestion.length === 1 && correctOptions.includes(teamAnswersForQuestion[0]);
-                    }
-                }
-
-                if (isCorrectForThisQuestion) {
-                    stageScoreForTeam += (question.points || 0);
-                }
-            });
-            team.score += stageScoreForTeam;
-            console.log(`团队 ${team.name} 在阶段 ${stageData.stageNumber} 获得 ${stageScoreForTeam} 分，总分: ${team.score}`);
-            
-            stageData.questions.forEach((_, qIndex) => {
-                const questionKeyToClear = `s${stageData.stageNumber}-q${qIndex}`;
-                if (team.answers) { // 确保answers对象存在
-                    delete team.answers[questionKeyToClear];
-                }
-            });
+        // 收集当前阶段的所有答案
+        const currentStageAnswers = {}; 
+        stageData.questions.forEach((question, qIndex) => {
+            const questionKey = `s${stageData.stageNumber}-q${qIndex}`;
+            const teamAnswersForQuestion = myCurrentTeam.answers && myCurrentTeam.answers[questionKey] ? myCurrentTeam.answers[questionKey] : [];
+            currentStageAnswers[questionKey] = teamAnswersForQuestion; // 记录到要发送的答案中
         });
 
-        updateLeaderboard();
-        proceedToNextStageOrEnd();
+        // 清除当前阶段的本地答案，因为答案已经收集并即将发送到服务器
+        if (myCurrentTeam.answers) { 
+            stageData.questions.forEach((_, qIndex) => {
+                const questionKeyToClear = `s${stageData.stageNumber}-q${qIndex}`;
+                delete myCurrentTeam.answers[questionKeyToClear];
+            });
+        }
+        
+        // 【将答案发送给服务器】
+        console.log(`[DRILL.JS] 正在向服务器提交团队 ${myTeamId} 阶段 ${stageData.stageNumber} 的答案...`, currentStageAnswers);
+        socket.emit('submitStageAnswers', {
+            lobbyId: currentLobbyId,
+            teamId: myTeamId,
+            stageNumber: stageData.stageNumber,
+            answers: currentStageAnswers // 发送本阶段收集的所有答案
+        });
+
+        // 【区分教师端和学生端的后续行为】
+        if (myTeamId === 'teacher_ops_team') { // 假设 'teacher_ops_team' 是教师端的唯一标识
+             // 教师端在提交答案后，向服务器请求进入下一阶段
+             socket.emit('requestNextStage', { 
+                lobbyId: currentLobbyId, 
+                caseId: caseId, 
+                currentStageIndex: currentStageIndex,
+                teamsDataSnapshot: teamsData // 可以把当前所有队伍的快照也发给服务器，以便服务器核对
+             });
+             console.log(`[DRILL.JS] 教师端请求进入下一阶段: ${currentStageIndex + 1}`);
+        } else {
+             // 学生端提交答案后，将按钮状态改为等待教师操作
+             if (nextStageBtn) {
+                 nextStageBtn.textContent = '答案已提交，等待教师操作...';
+                 nextStageBtn.disabled = true;
+                 nextStageBtn.classList.remove('bg-cyan-600', 'hover:bg-cyan-700');
+                 nextStageBtn.classList.add('bg-gray-500', 'cursor-not-allowed');
+             }
+        }
     }
 
+    // 【修改 proceedToNextStageOrEnd 函数】
     function proceedToNextStageOrEnd() {
         if (currentStageIndex >= currentCaseData.stages.length - 1) {
-            if (confirm('所有阶段已完成！确认结束本次推演吗？')) {
-                if (forceEndBtn && forceEndBtn.href) window.location.href = forceEndBtn.href;
+            // 所有阶段已完成，跳转到结果页
+            if (confirm('所有阶段已完成！确认结束本次推演并查看结果吗？')) {
+                if (currentCaseData && teamsData) {
+                    localStorage.setItem('drillResults', JSON.stringify(teamsData)); // 保存最终团队数据
+                    localStorage.setItem('currentCaseTitle', currentCaseData.title.replace(/\\/g, '').trim()); 
+                    console.log('推演完成，团队分数已保存到localStorage:', teamsData);
+                }
+                // 确保href属性已在HTML中正确设置，或者在此处用JS跳转
+                if (forceEndBtn && forceEndBtn.href) { 
+                    window.location.href = forceEndBtn.href; 
+                } else {
+                    window.location.href = `results.html?caseId=${caseId}`; 
+                }
             }
         } else {
+            // 正常进入下一阶段 (这个分支现在主要由教师端触发，或由服务器指令触发)
             const nextStage = currentStageIndex + 1;
             setActiveStage(nextStage);
         }
     }
     
+    // 【修改 updateLeaderboard 函数】
     function updateLeaderboard() {
         if (!leaderboardElement) {
             console.warn("排行榜元素未找到，无法更新。");
             return;
         }
         leaderboardElement.innerHTML = ''; 
-        if (teamsData.length === 1 && (teamsData[0].id === 'placeholder' || teamsData[0].id === 'no-teams')) {
-            const li = document.createElement('li');
-            li.className = 'text-center text-gray-500 p-2';
-            li.textContent = teamsData[0].name; 
-            leaderboardElement.appendChild(li);
-            return;
+        
+        // 【关键修改点】：调整过滤逻辑，只有当存在真实学生队伍时才过滤掉教师演示队伍
+        let teamsToDisplay = [...teamsData]; // 复制一份，避免修改原始数组
+
+        // 检查是否存在至少一个非占位符、非教师演示的队伍，且有实际学生成员
+        const hasActualStudentTeams = teamsData.some(team => 
+            team.id !== 'placeholder' && 
+            team.id !== 'no-teams' && 
+            team.id !== 'teacher_ops_team' && 
+            team.students && team.students.length > 0
+        );
+
+        if (hasActualStudentTeams) {
+            // 如果有真实学生队伍，则从显示中过滤掉教师演示队伍
+            teamsToDisplay = teamsToDisplay.filter(team => team.id !== 'placeholder' && team.id !== 'no-teams' && team.id !== 'teacher_ops_team');
+        } else {
+            // 如果没有真实学生队伍，确保教师演示队伍在显示列表中（如果它存在的话）
+            // 并且过滤掉其他占位符
+            teamsToDisplay = teamsToDisplay.filter(team => team.id !== 'placeholder' && team.id !== 'no-teams');
         }
-        const actualTeams = teamsData.filter(team => team.id !== 'placeholder' && team.id !== 'no-teams');
-        const sortedTeams = [...actualTeams].sort((a, b) => b.score - a.score);
+
+        const sortedTeams = [...teamsToDisplay].sort((a, b) => b.score - a.score);
+
         if (sortedTeams.length === 0) {
              leaderboardElement.innerHTML = '<li class="text-center text-gray-500 p-2">暂无队伍参与排名</li>';
              return;
@@ -608,88 +716,27 @@ document.addEventListener('DOMContentLoaded', async function () {
     // --- 7. 事件监听器 ---
     if (nextStageBtn) {
         nextStageBtn.addEventListener('click', () => {
-            if (isTeacher) {
-                console.log('[DRILL.JS] Teacher clicked Next Stage/Complete Drill.');
-                // Server will advance stage for students. Teacher UI might also listen to 'advanceToStage'.
-                // Teacher no longer calculates scores locally for all teams this way.
-                // Scores are updated via 'scoresUpdated' event from server.
-                
-                if (currentStageIndex >= currentCaseData.stages.length - 1) {
-                    if (confirm('所有阶段已完成！确认结束本次推演吗？教师将结束所有学生的推演。')) {
-                        // Notify server that drill is ending
-                        if (socket && currentLobbyId) {
-                             socket.emit('teacherEndsDrill', { lobbyId: currentLobbyId });
-                        }
-                        // Teacher specific: save their view of teamsData for results (or rely on server's final version)
-                        localStorage.setItem('drillResults', JSON.stringify(teamsData));
-                        localStorage.setItem('currentCaseTitle', currentCaseData.title.replace(/\\/g, '').trim());
-                        if (forceEndBtn && forceEndBtn.href) {
-                            window.location.href = forceEndBtn.href;
-                        } else {
-                            window.location.href = `results.html?caseId=${dbCaseId}`;
-                        }
-                    }
-                } else {
-                    // Teacher requests server to advance stage
-                    if (socket && currentLobbyId && dbCaseId) {
-                        // Pass current teamsData as a snapshot if server needs it for any reason before advancing
-                        // Or rely on server having the latest scores.
-                        socket.emit('teacherRequestsNextStage', {
-                            lobbyId: currentLobbyId,
-                            caseId: dbCaseId,
-                            currentStageIndex: currentStageIndex,
-                            teamsDataSnapshot: teamsData // Teacher's view of teamsData
-                        });
-                        // Teacher's own UI advances. Students will advance via 'advanceToStage' event.
-                        setActiveStage(currentStageIndex + 1);
-                    }
-                }
-            } else {
-                // Student view: Next stage button should ideally be disabled or not present.
-                // Stage progression for students is handled by 'advanceToStage' event from server.
-                // If it's visible and clickable, it should do nothing or show a message.
-                alert('请等待教师进入下一阶段。');
-            }
+            calculateScoresAndProceed(); 
         });
     }
 
     if (forceEndBtn) {
         forceEndBtn.addEventListener('click', (event) => {
-            // event.preventDefault(); // 如果 forceEndBtn 是 <a> 标签，阻止其默认跳转
             if (confirm('确定要强制结束本次推演并查看结果吗？')) {
-                // 【新增】在强制结束时保存团队分数
                 if (currentCaseData && teamsData) {
                     localStorage.setItem('drillResults', JSON.stringify(teamsData));
-                    localStorage.setItem('currentCaseTitle', currentCaseData.title); // 【新增】同时保存案例标题
+                    localStorage.setItem('currentCaseTitle', currentCaseData.title.replace(/\\/g, '').trim()); 
                     console.log('推演强制结束，团队分数已保存到localStorage:', teamsData);
                 }
-                // 确保href属性已在HTML中正确设置，或者在此处用JS跳转
-                // window.location.href = `results.html?caseId=${caseId}`; // 如果 forceEndBtn 不是 a 标签，或需要动态 caseId
+                if (forceEndBtn && forceEndBtn.href) { 
+                    window.location.href = forceEndBtn.href; 
+                } else {
+                    window.location.href = `results.html?caseId=${caseId}`; 
+                }
             } else {
-                 event.preventDefault(); // 如果用户取消，则阻止跳转
+                 event.preventDefault(); 
             }
         });
-    }
-    
-    function proceedToNextStageOrEnd() {
-        if (currentStageIndex >= currentCaseData.stages.length - 1) {
-            if (confirm('所有阶段已完成！确认结束本次推演并查看结果吗？')) {
-                // 【新增】在推演自然完成时保存团队分数
-                if (currentCaseData && teamsData) {
-                    localStorage.setItem('drillResults', JSON.stringify(teamsData));
-                    localStorage.setItem('currentCaseTitle', currentCaseData.title.replace(/\\/g, '').trim()); // 保存清理后的案例标题
-                    console.log('推演完成，团队分数已保存到localStorage:', teamsData);
-                }
-                if (forceEndBtn && forceEndBtn.href) { // forceEndBtn 通常就是结果页的链接
-                    window.location.href = forceEndBtn.href; // 使用已有的跳转逻辑
-                } else {
-                    window.location.href = `results.html?caseId=${caseId}`; // 备用跳转
-                }
-            }
-        } else {
-            const nextStage = currentStageIndex + 1;
-            setActiveStage(nextStage);
-        }
     }
     
     if(pauseBtn) {

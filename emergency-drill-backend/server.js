@@ -10,6 +10,7 @@ import { v4 as uuidv4 } from 'uuid';
 import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import Case from './models/Case.js'; // Ensure Case model is imported
 
 import authRoutes from './routes/authRoutes.js';
 import caseRoutes from './routes/caseRoutes.js';
@@ -126,39 +127,165 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('teacherStartsDrill', (data) => {
-    const { lobbyId, caseId, teamsData } = data;
-    console.log(`[SERVER] 教师 ${socket.id} 从大厅 ${lobbyId} 开始案例 ${caseId} 的推演`);
-    if (global.activeLobbies && global.activeLobbies[lobbyId] && global.activeLobbies[lobbyId].caseId === caseId) {
-        global.activeLobbies[lobbyId].teams = teamsData; // 更新服务器端的大厅队伍信息（包含分数等）
-        io.to(lobbyId).emit('drillHasStarted', { caseId, lobbyId, teamsData }); // 可以把队伍数据也发给学生端（如果需要）
-        console.log(`[SERVER] 已向大厅 ${lobbyId} 广播 "drillHasStarted" 事件`);
-    } else {
-        console.warn(`[SERVER] "teacherStartsDrill" 请求中大厅ID ${lobbyId} 或案例ID ${caseId} 无效`);
-        socket.emit('startDrillFailed', { message: '无法开始推演，大厅或案例信息不匹配。'});
-    }
+  socket.on('clientJoinsDrillRoom', (data) => {
+      const { lobbyId } = data;
+      if (global.activeLobbies && global.activeLobbies[lobbyId]) {
+          socket.join(lobbyId);
+          console.log(`[SERVER] Client ${socket.id} joined drill room for lobby ${lobbyId}`);
+          // Optionally send current state if needed (e.g. current stage if student reconnects)
+          // socket.emit('currentDrillState', { lobby: global.activeLobbies[lobbyId] });
+      } else {
+          console.warn(`[SERVER] Client ${socket.id} tried to join non-existent drill room for lobby ${lobbyId}`);
+          // socket.emit('drillRoomError', { message: 'Drill room not found.' });
+      }
   });
 
-  socket.on('requestNextStage', (data) => {
-    const { lobbyId, caseId, currentStageIndex, teamsDataSnapshot } = data; 
-    console.log(`[SERVER] 教师 ${socket.id} 在大厅 ${lobbyId} 请求案例 ${caseId} 从阶段 ${currentStageIndex} 进入下一阶段`);
+  socket.on('teacherStartsDrill', async (data) => { // Make it async
+      const { lobbyId, caseId, teamsData } = data;
+      console.log(`[SERVER] 教师 ${socket.id} 从大厅 ${lobbyId} 开始案例 ${caseId} 的推演`);
+      
+      const lobby = global.activeLobbies[lobbyId];
+      if (lobby && lobby.caseId === caseId) {
+          try {
+              const caseDetails = await Case.findById(caseId).lean(); // Use .lean() for plain JS object
+              if (!caseDetails) {
+                  console.warn(`[SERVER] "teacherStartsDrill" - Case ${caseId} not found in DB.`);
+                  socket.emit('startDrillFailed', { message: '无法开始推演，案例数据未找到。' });
+                  return;
+              }
+              lobby.caseDetails = caseDetails; // Store full case details
+              lobby.teams = teamsData; // Update teams data from teacher
+              
+              console.log(`[SERVER] Case ${caseId} details loaded into lobby ${lobbyId}.`);
+              io.to(lobbyId).emit('drillHasStarted', { caseId, lobbyId, teamsData });
+              console.log(`[SERVER] 已向大厅 ${lobbyId} 广播 "drillHasStarted" 事件`);
+          } catch (error) {
+              console.error(`[SERVER] "teacherStartsDrill" - Error fetching case ${caseId}:`, error);
+              socket.emit('startDrillFailed', { message: '服务器获取案例数据失败。' });
+          }
+      } else {
+          console.warn(`[SERVER] "teacherStartsDrill" 请求中大厅ID ${lobbyId} 或案例ID ${caseId} 无效`);
+          socket.emit('startDrillFailed', { message: '无法开始推演，大厅或案例信息不匹配。' });
+      }
+  });
+  
+  socket.on('studentSubmitAnswer', (data) => {
+      const { lobbyId, caseId, questionKey, answerData, teamId, stageNumber, questionIndex } = data;
+      console.log(`[SERVER] Received studentSubmitAnswer from team ${teamId} for lobby ${lobbyId}, question ${questionKey}`);
 
-    if (global.activeLobbies && global.activeLobbies[lobbyId] && global.activeLobbies[lobbyId].caseId === caseId) {
-        if (teamsDataSnapshot) { // 更新服务器端该大厅的队伍最新分数等信息
-            global.activeLobbies[lobbyId].teams = teamsDataSnapshot;
-            console.log(`[SERVER] 大厅 ${lobbyId} 队伍数据已根据教师端快照更新。`);
-        }
-        const nextStageIndex = parseInt(currentStageIndex, 10) + 1;
-        io.to(lobbyId).emit('advanceToStage', { 
-          lobbyId: lobbyId,
-          caseId: caseId, 
-          nextStageIndex: nextStageIndex 
-        });
-        console.log(`[SERVER] 已向大厅 ${lobbyId} 广播 advanceToStage 事件，目标阶段: ${nextStageIndex}`);
-    } else {
-        console.warn(`[SERVER] "requestNextStage" 请求中大厅ID ${lobbyId} 或案例ID ${caseId} 无效`);
-        socket.emit('nextStageFailed', { message: '进入下一阶段失败，大厅或案例信息不匹配。'});
-    }
+      const lobby = global.activeLobbies[lobbyId];
+      if (!lobby || !lobby.caseDetails || lobby.caseId !== caseId) {
+          console.warn('[SERVER] studentSubmitAnswer: Invalid lobby or missing caseDetails.');
+          // Optionally emit an error back to the student
+          // socket.emit('answerSubmissionError', { questionKey, message: 'Lobby or case data not found on server.' });
+          return;
+      }
+
+      const currentStageData = lobby.caseDetails.stages.find(s => s.stageNumber === stageNumber);
+      if (!currentStageData || !currentStageData.questions || !currentStageData.questions[questionIndex]) {
+          console.warn(`[SERVER] studentSubmitAnswer: Question not found for stage ${stageNumber}, questionIndex ${questionIndex}`);
+          return;
+      }
+      
+      const question = currentStageData.questions[questionIndex];
+      let pointsAwarded = 0;
+      let isCorrect = false;
+
+      // Determine correct answers from question.answerOptions
+      const correctOptions = (question.answerOptions || [])
+          .filter(opt => opt.isCorrect === true)
+          .map(opt => opt.text.replace(/"/g, '&quot;')); // Ensure consistent formatting with submitted values
+
+      if (correctOptions.length > 0) {
+          if (question.questionType === 'MultipleChoice-Multi') {
+              isCorrect = answerData.length === correctOptions.length &&
+                          correctOptions.every(co => answerData.includes(co)) &&
+                          answerData.every(ta => correctOptions.includes(ta));
+          } else if (answerData && answerData.length === 1) { // Single choice, Binary
+              isCorrect = correctOptions.includes(answerData[0]);
+          }
+      }
+      // Add more conditions for other question types like Map-Placement if needed, using question.correctAnswerData
+
+      if (isCorrect) {
+          pointsAwarded = question.points || 10; // Default to 10 points if not specified
+      }
+
+      const teamIndex = lobby.teams.findIndex(t => t.id === teamId);
+      if (teamIndex !== -1) {
+          // Update score - consider if answers can be re-submitted or if score is additive
+          // For now, let's assume this is the first submission for this question by this team for simplicity
+          // A more complex system would track submissions per question to prevent re-scoring.
+          if (!lobby.teams[teamIndex].answers) {
+              lobby.teams[teamIndex].answers = {};
+          }
+          // Store student's answer and if it was correct for this attempt
+          lobby.teams[teamIndex].answers[questionKey] = {
+              submitted: answerData,
+              wasCorrect: isCorrect,
+              awarded: pointsAwarded
+          };
+
+          // Only add points if this is a new correct answer or if rules allow re-scoring.
+          // Simplistic: add points. A real system might check if already answered correctly.
+          lobby.teams[teamIndex].score = (lobby.teams[teamIndex].score || 0) + pointsAwarded;
+          
+          console.log(`[SERVER] Team ${teamId} in lobby ${lobbyId} answered ${questionKey}. Correct: ${isCorrect}, Points: ${pointsAwarded}, New Score: ${lobby.teams[teamIndex].score}`);
+          io.to(lobbyId).emit('scoresUpdated', lobby.teams);
+      } else {
+          console.warn(`[SERVER] studentSubmitAnswer: Team ID ${teamId} not found in lobby ${lobbyId}.`);
+      }
+  });
+
+  // Rename this handler or make requestNextStage an alias
+  socket.on('teacherRequestsNextStage', (data) => { // Renamed from requestNextStage
+      const { lobbyId, caseId, currentStageIndex, teamsDataSnapshot } = data;
+      console.log(`[SERVER] Teacher ${socket.id} in lobby ${lobbyId} requests next stage from ${currentStageIndex}`);
+
+      const lobby = global.activeLobbies[lobbyId];
+      if (lobby && lobby.caseId === caseId) {
+          if (teamsDataSnapshot) { // Teacher might send their view of scores
+              // Reconcile or simply update based on teacher's snapshot if that's the desired logic
+              // For now, let's assume server scores are authoritative, but teacher snapshot can update student names if they changed.
+              // lobby.teams = teamsDataSnapshot; // Or merge carefully
+          }
+          const nextStageIndex = parseInt(currentStageIndex, 10) + 1;
+          
+          // Check if nextStageIndex is valid based on lobby.caseDetails.stages
+          if (lobby.caseDetails && nextStageIndex < lobby.caseDetails.stages.length) {
+              io.to(lobbyId).emit('advanceToStage', {
+                  lobbyId: lobbyId,
+                  caseId: caseId,
+                  nextStageIndex: nextStageIndex
+              });
+              console.log(`[SERVER] Broadcast advanceToStage to lobby ${lobbyId}, target stage: ${nextStageIndex}`);
+          } else if (lobby.caseDetails && nextStageIndex >= lobby.caseDetails.stages.length) {
+              // This means it was the last stage, teacher is effectively ending the drill by advancing past last stage
+              console.log(`[SERVER] Teacher advanced past the last stage in lobby ${lobbyId}. Drill considered ended.`);
+              io.to(lobbyId).emit('drillCompleted', { lobbyId, caseId, finalTeamsData: lobby.teams });
+              // Optionally clean up the lobby here or wait for teacherEndsDrill event
+          } else {
+               console.warn(`[SERVER] teacherRequestsNextStage: Case details not available or invalid next stage index for lobby ${lobbyId}.`);
+               socket.emit('nextStageFailed', { message: '无法进入下一阶段，案例阶段信息错误。' });
+          }
+      } else {
+          console.warn(`[SERVER] "teacherRequestsNextStage" invalid lobby/case for lobby ${lobbyId}.`);
+          socket.emit('nextStageFailed', { message: '进入下一阶段失败，大厅或案例信息不匹配。' });
+      }
+  });
+  
+  socket.on('teacherEndsDrill', (data) => {
+      const { lobbyId } = data;
+      console.log(`[SERVER] Teacher ${socket.id} explicitly ended drill for lobby ${lobbyId}`);
+      const lobby = global.activeLobbies[lobbyId];
+      if (lobby) {
+          io.to(lobbyId).emit('drillCompleted', { lobbyId, caseId: lobby.caseId, finalTeamsData: lobby.teams });
+          // Clean up the lobby
+          delete global.activeLobbies[lobbyId];
+          console.log(`[SERVER] Lobby ${lobbyId} removed after teacher ended drill.`);
+      } else {
+          console.warn(`[SERVER] teacherEndsDrill: Lobby ${lobbyId} not found.`);
+      }
   });
 
   socket.on('disconnect', () => {
