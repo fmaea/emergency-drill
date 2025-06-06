@@ -175,62 +175,69 @@ io.on('connection', (socket) => {
 
       const lobby = global.activeLobbies[lobbyId];
       if (!lobby || !lobby.caseDetails || lobby.caseId !== caseId) {
-          console.warn('[SERVER] studentSubmitAnswer: Invalid lobby or missing caseDetails.');
-          // Optionally emit an error back to the student
-          // socket.emit('answerSubmissionError', { questionKey, message: 'Lobby or case data not found on server.' });
+          console.warn('[SERVER] studentSubmitAnswer: Invalid lobby or missing caseDetails for lobbyId:', lobbyId);
           return;
       }
 
       const currentStageData = lobby.caseDetails.stages.find(s => s.stageNumber === stageNumber);
       if (!currentStageData || !currentStageData.questions || !currentStageData.questions[questionIndex]) {
-          console.warn(`[SERVER] studentSubmitAnswer: Question not found for stage ${stageNumber}, questionIndex ${questionIndex}`);
+          console.warn(`[SERVER] studentSubmitAnswer: Question not found for stage ${stageNumber}, questionIndex ${questionIndex} in lobby ${lobbyId}`);
           return;
       }
       
       const question = currentStageData.questions[questionIndex];
-      let pointsAwarded = 0;
-      let isCorrect = false;
+      let pointsAwardedThisAttempt = 0; // Points awarded for this specific submission
+      let isCorrectThisAttempt = false;
 
-      // Determine correct answers from question.answerOptions
       const correctOptions = (question.answerOptions || [])
           .filter(opt => opt.isCorrect === true)
-          .map(opt => opt.text.replace(/"/g, '&quot;')); // Ensure consistent formatting with submitted values
+          .map(opt => opt.text.replace(/"/g, '&quot;'));
 
       if (correctOptions.length > 0) {
           if (question.questionType === 'MultipleChoice-Multi') {
-              isCorrect = answerData.length === correctOptions.length &&
-                          correctOptions.every(co => answerData.includes(co)) &&
-                          answerData.every(ta => correctOptions.includes(ta));
+              isCorrectThisAttempt = answerData && answerData.length === correctOptions.length &&
+                                  correctOptions.every(co => answerData.includes(co)) &&
+                                  answerData.every(ta => correctOptions.includes(ta));
           } else if (answerData && answerData.length === 1) { // Single choice, Binary
-              isCorrect = correctOptions.includes(answerData[0]);
+              isCorrectThisAttempt = correctOptions.includes(answerData[0]);
           }
       }
-      // Add more conditions for other question types like Map-Placement if needed, using question.correctAnswerData
-
-      if (isCorrect) {
-          pointsAwarded = question.points || 10; // Default to 10 points if not specified
-      }
+      // Add more conditions for other question types like Map-Placement if needed
 
       const teamIndex = lobby.teams.findIndex(t => t.id === teamId);
       if (teamIndex !== -1) {
-          // Update score - consider if answers can be re-submitted or if score is additive
-          // For now, let's assume this is the first submission for this question by this team for simplicity
-          // A more complex system would track submissions per question to prevent re-scoring.
           if (!lobby.teams[teamIndex].answers) {
               lobby.teams[teamIndex].answers = {};
           }
-          // Store student's answer and if it was correct for this attempt
+
+          // Check if this question was already answered correctly and points given
+          const previousAnswerRecord = lobby.teams[teamIndex].answers[questionKey];
+          let pointsAlreadyGivenForThisQuestion = false;
+          if (previousAnswerRecord && previousAnswerRecord.pointsGivenThisQuestion) {
+              pointsAlreadyGivenForThisQuestion = true;
+          }
+
+          if (isCorrectThisAttempt && !pointsAlreadyGivenForThisQuestion) {
+              pointsAwardedThisAttempt = question.points || 10; // Default to 10 points if not specified
+              lobby.teams[teamIndex].score = (lobby.teams[teamIndex].score || 0) + pointsAwardedThisAttempt;
+              pointsAlreadyGivenForThisQuestion = true; // Mark points as given for this question
+              console.log(`[SERVER] Team ${teamId} answered ${questionKey} correctly for the FIRST time. Points: ${pointsAwardedThisAttempt}. New Score: ${lobby.teams[teamIndex].score}`);
+          } else if (isCorrectThisAttempt && pointsAlreadyGivenForThisQuestion) {
+              console.log(`[SERVER] Team ${teamId} answered ${questionKey} correctly AGAIN. No additional points.`);
+              // Points awarded this attempt remains 0
+          } else { // Incorrect attempt
+              console.log(`[SERVER] Team ${teamId} answered ${questionKey} incorrectly.`);
+              // Points awarded this attempt remains 0
+          }
+
+          // Update or create the answer record for this question
           lobby.teams[teamIndex].answers[questionKey] = {
               submitted: answerData,
-              wasCorrect: isCorrect,
-              awarded: pointsAwarded
+              wasCorrectThisAttempt: isCorrectThisAttempt,
+              awardedThisAttempt: pointsAwardedThisAttempt, // Store points for this specific attempt
+              pointsGivenThisQuestion: pointsAlreadyGivenForThisQuestion // Persist if points were ever given
           };
-
-          // Only add points if this is a new correct answer or if rules allow re-scoring.
-          // Simplistic: add points. A real system might check if already answered correctly.
-          lobby.teams[teamIndex].score = (lobby.teams[teamIndex].score || 0) + pointsAwarded;
           
-          console.log(`[SERVER] Team ${teamId} in lobby ${lobbyId} answered ${questionKey}. Correct: ${isCorrect}, Points: ${pointsAwarded}, New Score: ${lobby.teams[teamIndex].score}`);
           io.to(lobbyId).emit('scoresUpdated', lobby.teams);
       } else {
           console.warn(`[SERVER] studentSubmitAnswer: Team ID ${teamId} not found in lobby ${lobbyId}.`);

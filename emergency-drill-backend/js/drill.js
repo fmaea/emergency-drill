@@ -35,6 +35,8 @@ document.addEventListener('DOMContentLoaded', async function () {
      let currentLobbyId = null;
      let dbCaseId = null; // To avoid confusion with urlParams.get('caseId') which might be just 'caseId' string
      let isTeacher = false; // We need a way to determine if the user is a teacher
+     let currentSelections = {}; // To store selections before confirmation
+     let confirmedQuestions = {}; // To track { lobbyId_caseId_teamId_questionKey: true }
 
     // --- 3. 页面启动逻辑 ---
     const urlParams = new URLSearchParams(window.location.search);
@@ -107,6 +109,7 @@ document.addEventListener('DOMContentLoaded', async function () {
             // Display a message and prepare for results page
             alert('本次推演已正式结束！点击“确定”查看最终结果。');
             
+            localStorage.setItem('userRoleForResults', isTeacher ? 'teacher' : 'student');
             // Save final data for results page (teacher might have already done part of this)
             localStorage.setItem('drillResults', JSON.stringify(teamsData));
             if (currentCaseData && currentCaseData.title) { // currentCaseData should be loaded
@@ -382,6 +385,32 @@ document.addEventListener('DOMContentLoaded', async function () {
                         });
                     }
                     questionWrapper.appendChild(optionsDiv);
+
+                    // Add Confirm Answer button for students
+                    if (!isTeacher) {
+                        const confirmButton = document.createElement('button');
+                        confirmButton.textContent = '确认答案';
+                        confirmButton.className = 'confirm-answer-btn mt-2 px-3 py-1.5 text-sm bg-green-600 hover:bg-green-700 text-white rounded-md shadow focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 focus:ring-offset-gray-800';
+                        confirmButton.dataset.questionKey = questionId; // questionId is s<stageNum>-q<qIndex>
+                        confirmButton.dataset.stageNum = stageData.stageNumber;
+                        confirmButton.dataset.qIndex = qIndex;
+                        confirmButton.dataset.questionType = question.questionType;
+                        
+                        // Check if this question was already confirmed by this team in this session
+                        const confirmationKey = `${currentLobbyId}_${dbCaseId}_${currentStudentTeamId}_${questionId}`;
+                        if (confirmedQuestions[confirmationKey]) {
+                            confirmButton.disabled = true;
+                            confirmButton.textContent = '已确认';
+                            // Also disable inputs for this question if confirmed (done by lockQuestionInputs)
+                        }
+                        questionWrapper.appendChild(confirmButton);
+                        if (confirmedQuestions[confirmationKey]) {
+                            // confirmButton.disabled = true; // Already set above
+                            // confirmButton.textContent = '已确认'; // Already set above
+                            lockQuestionInputs(questionId, confirmButton); // Call to disable options too
+                        }
+                    }
+
                     if (question.hint) { 
                         const hintP = document.createElement('p');
                         hintP.className = 'text-xs text-gray-500 mt-2';
@@ -438,55 +467,82 @@ document.addEventListener('DOMContentLoaded', async function () {
     
     
     function handleAnswerSelection(operatingTeamIdForTeacher, stageNum, questionIndex, questionType, targetElement) {
-        const questionKey = `s${stageNum}-q${questionIndex}`;
+        const questionKey = `s${stageNum}-q${questionIndex}`; // questionKey is s<stageNum>-q<qIndex>
         let selectedValue = targetElement.value;
         if (targetElement.tagName === 'BUTTON' && targetElement.dataset.value) {
             selectedValue = targetElement.dataset.value;
         }
 
-        let answerData;
-        // For multi-choice, collect all checked values if it's a student action
-        if (!isTeacher && questionType === 'MultipleChoice-Multi') {
-            const optionsContainer = targetElement.closest('.question-options');
-            const checkedInputs = optionsContainer.querySelectorAll('input[type="checkbox"]:checked');
-            answerData = Array.from(checkedInputs).map(input => input.value);
-        } else {
-            answerData = [selectedValue]; // Keep as array for consistency
-        }
-
-        if (!isTeacher && currentStudentTeamId && currentLobbyId && dbCaseId && socket) {
-            // Student submits answer
-            console.log(`[DRILL.JS] Student ${currentStudentTeamId} submitting answer for ${questionKey}:`, answerData);
-            socket.emit('studentSubmitAnswer', {
-                lobbyId: currentLobbyId,
-                caseId: dbCaseId,
-                questionKey: questionKey,
-                answerData: answerData,
-                teamId: currentStudentTeamId,
-                stageNumber: stageNum, // Send stage number for context
-                questionIndex: questionIndex // Send question index for context
-            });
+        if (!isTeacher) {
+            // Student is selecting, store temporarily
+            if (questionType === 'MultipleChoice-Multi') {
+                if (!currentSelections[questionKey] || !Array.isArray(currentSelections[questionKey])) {
+                    currentSelections[questionKey] = [];
+                }
+                const currentValueIndex = currentSelections[questionKey].indexOf(selectedValue);
+                if (targetElement.checked) {
+                    if (currentValueIndex === -1) currentSelections[questionKey].push(selectedValue);
+                } else {
+                    if (currentValueIndex > -1) currentSelections[questionKey].splice(currentValueIndex, 1);
+                }
+            } else { // Radio, Binary-Decision (where value is on button)
+                currentSelections[questionKey] = [selectedValue];
+            }
+            console.log(`[DRILL.JS] Student temp selection for ${questionKey}:`, currentSelections[questionKey]);
         } else if (isTeacher && operatingTeamIdForTeacher) {
-            // Teacher's existing logic to update local teamsData (if they are still operating a team for demo)
-            // This part might be removed or changed depending on teacher's role in an actual multi-student drill
+            // Teacher's existing simulation logic (can remain as is for now)
             const team = teamsData.find(t => t.id === operatingTeamIdForTeacher);
             if (team) {
+                if (!team.answers) team.answers = {}; // Ensure answers object exists
                 if (questionType === 'MultipleChoice-Multi') {
                     if (!team.answers[questionKey] || !Array.isArray(team.answers[questionKey])) {
                         team.answers[questionKey] = [];
                     }
-                    const currentValueIndex = team.answers[questionKey].indexOf(selectedValue); // selectedValue here is the single option clicked
+                    const currentValueIndex = team.answers[questionKey].indexOf(selectedValue);
                     if (targetElement.checked) {
                         if (currentValueIndex === -1) team.answers[questionKey].push(selectedValue);
                     } else {
                         if (currentValueIndex > -1) team.answers[questionKey].splice(currentValueIndex, 1);
                     }
                 } else {
-                    team.answers[questionKey] = answerData; // answerData is [selectedValue]
+                    team.answers[questionKey] = [selectedValue];
                 }
                 console.log(`[DRILL.JS] Teacher operating for team ${team.name} (${team.id}) on ${questionKey}, answers:`, team.answers[questionKey]);
             }
         }
+    }
+
+    function lockQuestionInputs(questionKey, confirmButtonElement) {
+        // Find the question container. Assuming questions are in elements with class 'question-item'
+        // and we can find it by finding an element that contains an input with name=questionKey or a button with data-question-key
+        let questionWrapper = null;
+        if (confirmButtonElement) {
+            questionWrapper = confirmButtonElement.closest('.question-item');
+        }
+        // Fallback or alternative: document.querySelector(`.question-item [name="${questionKey}"]`)?.closest('.question-item');
+        // This part needs robust targeting of the question's inputs.
+
+        if (questionWrapper) {
+            const inputs = questionWrapper.querySelectorAll('input[type="radio"], input[type="checkbox"], .question-item button'); // Include answer buttons if they are part of options
+            inputs.forEach(input => {
+                // Don't disable the already clicked confirm button again if it's part of 'inputs'
+                if (input !== confirmButtonElement && !input.classList.contains('confirm-answer-btn')) {
+                   input.disabled = true;
+                }
+            });
+            // Style the wrapper to indicate it's locked
+            questionWrapper.classList.add('opacity-70', 'pointer-events-none'); // Example styling
+        } else {
+            console.warn(`[DRILL.JS] Could not find question wrapper for ${questionKey} to lock inputs.`);
+        }
+        
+        if (confirmButtonElement) {
+            confirmButtonElement.disabled = true;
+            confirmButtonElement.textContent = '已确认';
+            confirmButtonElement.classList.remove('bg-green-600', 'hover:bg-green-700');
+            confirmButtonElement.classList.add('bg-gray-500');
+        }
+        console.log(`[DRILL.JS] Inputs locked for question ${questionKey}`);
     }
 
     function calculateScoresAndProceed() {
@@ -614,6 +670,47 @@ document.addEventListener('DOMContentLoaded', async function () {
     }
 
     // --- 7. 事件监听器 ---
+    document.body.addEventListener('click', function(event) {
+        if (event.target.classList.contains('confirm-answer-btn')) {
+            if (isTeacher || event.target.disabled) return; // Only students, and only if not already confirmed
+
+            const button = event.target;
+            const questionKey = button.dataset.questionKey;
+            const stageNum = parseInt(button.dataset.stageNum, 10);
+            const qIndex = parseInt(button.dataset.qIndex, 10);
+            // const questionType = button.dataset.questionType; // Already available from question object
+
+            const selectedAnswer = currentSelections[questionKey];
+
+            if (!selectedAnswer || selectedAnswer.length === 0) {
+                alert('请先选择一个答案，然后再确认。');
+                return;
+            }
+
+            if (confirm(`确认提交问题 "${questionKey}" 的答案吗？一旦确认，将无法修改。`)) {
+                console.log(`[DRILL.JS] Student confirmed answer for ${questionKey}:`, selectedAnswer);
+                
+                if (socket && currentStudentTeamId && currentLobbyId && dbCaseId) {
+                    socket.emit('studentSubmitAnswer', {
+                        lobbyId: currentLobbyId,
+                        caseId: dbCaseId,
+                        questionKey: questionKey,
+                        answerData: selectedAnswer, // Send the stored selection
+                        teamId: currentStudentTeamId,
+                        stageNumber: stageNum,
+                        questionIndex: qIndex
+                    });
+                }
+                lockQuestionInputs(questionKey, button); // Pass the button itself
+                
+                // Track confirmed questions for this session to persist disabled state on re-renders (e.g. if stage reloaded)
+                const confirmationKey = `${currentLobbyId}_${dbCaseId}_${currentStudentTeamId}_${questionKey}`;
+                confirmedQuestions[confirmationKey] = true;
+
+                // Check for stage completion (moved to Phase 3 of the plan)
+            }
+        }
+    });
     if (nextStageBtn) {
         nextStageBtn.addEventListener('click', () => {
             if (isTeacher) {
@@ -667,6 +764,7 @@ document.addEventListener('DOMContentLoaded', async function () {
             if (confirm('确定要强制结束本次推演并查看结果吗？')) {
                 // 【新增】在强制结束时保存团队分数
                 if (currentCaseData && teamsData) {
+                    localStorage.setItem('userRoleForResults', 'teacher'); 
                     localStorage.setItem('drillResults', JSON.stringify(teamsData));
                     localStorage.setItem('currentCaseTitle', currentCaseData.title); // 【新增】同时保存案例标题
                     console.log('推演强制结束，团队分数已保存到localStorage:', teamsData);

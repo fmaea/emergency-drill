@@ -32,8 +32,19 @@
                 <h1 class="text-2xl font-bold text-white">数据复盘中心</h1>
             </div>
             <div class="flex items-center space-x-4">
-                <a href="home.html" class="px-4 py-2 bg-cyan-600 hover:bg-cyan-700 rounded-md text-white font-semibold transition-transform transform hover:scale-105"><i class="fas fa-home mr-2"></i>返回主菜单</a>
-                <a href="login.html" class="px-4 py-2 bg-gray-600 hover:bg-gray-700 rounded-md text-white font-semibold transition-transform transform hover:scale-105"><i class="fas fa-sign-out-alt mr-2"></i>退出登录</a>
+                <a id="return-to-main-menu-btn" href="home.html" class="px-4 py-2 bg-cyan-600 hover:bg-cyan-700 rounded-md text-white font-semibold transition-transform transform hover:scale-105"><i class="fas fa-home mr-2"></i>返回主菜单</a>
+                
+                <!-- Student Specific Buttons Container -->
+                <div id="student-results-actions" class="hidden items-center space-x-4">
+                    <button id="save-results-btn" class="px-4 py-2 bg-green-600 hover:bg-green-700 rounded-md text-white font-semibold transition-transform transform hover:scale-105">
+                        <i class="fas fa-save mr-2"></i>保存结果
+                    </button>
+                    <a id="exit-study-btn" href="login.html" class="px-4 py-2 bg-gray-600 hover:bg-gray-700 rounded-md text-white font-semibold transition-transform transform hover:scale-105">
+                        <i class="fas fa-sign-out-alt mr-2"></i>退出学习
+                    </a>
+                </div>
+
+                <a id="logout-btn-teacher" href="login.html" class="px-4 py-2 bg-gray-600 hover:bg-gray-700 rounded-md text-white font-semibold transition-transform transform hover:scale-105"><i class="fas fa-sign-out-alt mr-2"></i>退出登录</a>
             </div>
         </div>
     </header>
