@@ -24,7 +24,8 @@
                 <h1 class="text-3xl font-bold mt-4">环应急战</h1>
                 <p class="text-gray-400">应急监测情景推演教学平台</p>
             </div>
-            <form action="home.html">
+            <form id="login-form">
+                <div id="login-error-message" class="mb-4 text-sm text-center" style="display: none;"></div>
                 <div class="mb-6">
                     <label for="username" class="block mb-2 text-sm font-medium text-gray-300">教师账号</label>
                     <div class="relative">
@@ -47,7 +48,44 @@
                     安全登录
                 </button>
             </form>
+            <div class="mt-8 pt-8 border-t border-gray-700">
+                <h2 class="text-2xl font-semibold text-center text-white mb-6">教师注册</h2>
+                <form id="register-form">
+                    <div class="mb-6">
+                        <label for="reg-username" class="block mb-2 text-sm font-medium text-gray-300">注册账号</label>
+                        <div class="relative">
+                            <span class="absolute inset-y-0 left-0 flex items-center pl-3">
+                                <i class="fa-solid fa-user-plus text-gray-400"></i>
+                            </span>
+                            <input type="text" id="reg-username" class="bg-gray-800 border border-gray-600 text-white text-sm rounded-lg focus:ring-cyan-500 focus:border-cyan-500 block w-full pl-10 p-2.5" placeholder="设置教师账号" required>
+                        </div>
+                    </div>
+                    <div class="mb-6">
+                        <label for="reg-fullName" class="block mb-2 text-sm font-medium text-gray-300">真实姓名</label>
+                        <div class="relative">
+                            <span class="absolute inset-y-0 left-0 flex items-center pl-3">
+                                <i class="fa-solid fa-id-card text-gray-400"></i>
+                            </span>
+                            <input type="text" id="reg-fullName" class="bg-gray-800 border border-gray-600 text-white text-sm rounded-lg focus:ring-cyan-500 focus:border-cyan-500 block w-full pl-10 p-2.5" placeholder="请输入真实姓名" required>
+                        </div>
+                    </div>
+                    <div class="mb-6">
+                        <label for="reg-password" class="block mb-2 text-sm font-medium text-gray-300">设置密码</label>
+                        <div class="relative">
+                            <span class="absolute inset-y-0 left-0 flex items-center pl-3">
+                                <i class="fa-solid fa-key text-gray-400"></i>
+                            </span>
+                            <input type="password" id="reg-password" class="bg-gray-800 border border-gray-600 text-white text-sm rounded-lg focus:ring-cyan-500 focus:border-cyan-500 block w-full pl-10 p-2.5" placeholder="至少6位字符" required>
+                        </div>
+                    </div>
+                    <div id="register-message" class="mb-4 text-sm text-center" style="display: none;"></div>
+                    <button type="submit" class="w-full text-white bg-green-600 hover:bg-green-700 focus:ring-4 focus:outline-none focus:ring-green-800 font-medium rounded-lg text-sm px-5 py-3 text-center transition-transform transform hover:scale-105">
+                        立即注册
+                    </button>
+                </form>
+            </div>
         </div>
     </div>
+    <script src="js/login.js"></script>
 </body>
 </html>
