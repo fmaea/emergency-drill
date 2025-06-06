@@ -37,6 +37,7 @@ document.addEventListener('DOMContentLoaded', async function () {
      let isTeacher = false; // We need a way to determine if the user is a teacher
      let currentSelections = {}; // To store selections before confirmation
      let confirmedQuestions = {}; // To track { lobbyId_caseId_teamId_questionKey: true }
+     let notifiedStageCompletion = {}; // To track { stageIndex: true } for the current team
 
     // --- 3. 页面启动逻辑 ---
     const urlParams = new URLSearchParams(window.location.search);
@@ -131,6 +132,59 @@ document.addEventListener('DOMContentLoaded', async function () {
 
         // 从localStorage加载队伍信息
         const storedTeams = localStorage.getItem('drillTeams');
+
+        if (isTeacher) {
+            socket.on('teamStageProgressUpdate', (data) => {
+                console.log('[DRILL.JS] Teacher received teamStageProgressUpdate:', data);
+                const { teamName, teamId, stageNumber, status } = data;
+
+                if (status === 'completed') {
+                    // Display a notification to the teacher.
+                    // Option 1: Simple alert
+                    // alert(`队伍 "${teamName}" 已完成阶段 ${stageNumber}！`);
+
+                    // Option 2: Update a dedicated status area in the UI (preferred for less disruption)
+                    // This requires an HTML element, e.g., <div id="teacher-notifications"></div>
+                    const notificationsArea = document.getElementById('teacher-notifications');
+                    if (notificationsArea) {
+                        const messageElement = document.createElement('p');
+                        messageElement.className = 'text-sm text-green-400 bg-gray-700 p-2 rounded-md mb-2';
+                        messageElement.textContent = `通知: 队伍 "${teamName}" 已完成阶段 ${stageNumber}。`;
+                        notificationsArea.prepend(messageElement); // Add new messages at the top
+                        // Optional: Limit the number of messages or make them disappear after a while
+                        setTimeout(() => {
+                            if (messageElement.parentNode === notificationsArea) { // Check if still in DOM
+                                notificationsArea.removeChild(messageElement);
+                            }
+                        }, 15000); // Remove after 15 seconds
+                    } else {
+                        // Fallback to alert if the dedicated area isn't found
+                        alert(`队伍 "${teamName}" 已完成阶段 ${stageNumber}！`);
+                    }
+
+                    // Option 3: Update the leaderboard entry for that team
+                    // This requires being able to find the team's specific element in the leaderboard.
+                    // For example, if leaderboard items have an ID like `leaderboard-team-${teamId}`
+                    const teamLeaderboardEntry = document.querySelector(`.leaderboard-item[data-team-id="${teamId}"]`); // Requires adding data-team-id to leaderboard items
+                    if (teamLeaderboardEntry) {
+                        let stageCompletionDisplay = teamLeaderboardEntry.querySelector('.stage-completion-status');
+                        if (!stageCompletionDisplay) {
+                            stageCompletionDisplay = document.createElement('span');
+                            stageCompletionDisplay.className = 'text-xs text-cyan-400 ml-2 stage-completion-status';
+                            // Find a place to append it, e.g., after team name
+                            const nameSpan = teamLeaderboardEntry.querySelector('.truncate'); // Assuming team name span has 'truncate'
+                            if (nameSpan && nameSpan.parentNode) {
+                                nameSpan.parentNode.insertBefore(stageCompletionDisplay, nameSpan.nextSibling);
+                            }
+                        }
+                        // Append or update stage completion status
+                        const currentStatus = stageCompletionDisplay.textContent;
+                        stageCompletionDisplay.textContent = currentStatus + ` S${stageNumber}✔ `;
+                    }
+                }
+            });
+        }
+
         if (storedTeams) {
             teamsData = JSON.parse(storedTeams);
             teamsData.forEach(team => { // 确保每个队伍对象都有score和answers属性
@@ -639,6 +693,7 @@ document.addEventListener('DOMContentLoaded', async function () {
         sortedTeams.forEach((team, index) => {
             const li = document.createElement('li');
             li.className = 'leaderboard-item flex justify-between items-center p-2 rounded-md transition-all duration-300 ease-in-out text-sm';
+            li.dataset.teamId = team.id; // Add this line
             if (index === 0) li.classList.add('bg-yellow-500/30', 'border', 'border-yellow-500', 'text-yellow-300');
             else if (index === 1) li.classList.add('bg-gray-400/30', 'border', 'border-gray-400', 'text-gray-200');
             else if (index === 2) li.classList.add('bg-orange-600/30', 'border', 'border-orange-600', 'text-orange-300');
@@ -704,13 +759,65 @@ document.addEventListener('DOMContentLoaded', async function () {
                 lockQuestionInputs(questionKey, button); // Pass the button itself
                 
                 // Track confirmed questions for this session to persist disabled state on re-renders (e.g. if stage reloaded)
-                const confirmationKey = `${currentLobbyId}_${dbCaseId}_${currentStudentTeamId}_${questionKey}`;
-                confirmedQuestions[confirmationKey] = true;
+                const sessionConfirmKey = `${currentLobbyId}_${dbCaseId}_${currentStudentTeamId}_${questionKey}`; // Use a different var name to avoid conflict
+                confirmedQuestions[sessionConfirmKey] = true;
 
-                // Check for stage completion (moved to Phase 3 of the plan)
+                // Call to check for stage completion using the 0-based currentStageIndex
+                checkAndNotifyStageCompletion(currentStageIndex); 
             }
         }
     });
+
+    function checkAndNotifyStageCompletion(stageIndex) {
+        if (isTeacher || !currentCaseData || !currentCaseData.stages[stageIndex]) {
+            return;
+        }
+
+        // Check if notification for this stage has already been sent for this team
+        const notificationKey = `${currentLobbyId}_${dbCaseId}_${currentStudentTeamId}_stage_${stageIndex}`;
+        if (notifiedStageCompletion[notificationKey]) {
+            // console.log(`[DRILL.JS] Stage ${stageIndex} completion already notified for team ${currentStudentTeamId}.`);
+            return;
+        }
+
+        const stageData = currentCaseData.stages[stageIndex];
+        const stagePanel = stagePanels[stageIndex]; // Assuming stagePanels array is accessible
+
+        if (!stagePanel || !stageData.questions || stageData.questions.length === 0) {
+            return; // No questions or panel found for this stage
+        }
+
+        const totalQuestionsInStage = stageData.questions.length;
+        let confirmedCount = 0;
+
+        // Iterate through questions of the current stage to check their confirmed status
+        // This relies on the `confirmedQuestions` object which tracks client-side confirmations
+        // or by checking if all confirm buttons in that stage are disabled.
+        // Let's use the `confirmedQuestions` state for a more direct check.
+        for (let i = 0; i < totalQuestionsInStage; i++) {
+            const questionKeyToCheck = `s${stageData.stageNumber}-q${i}`; // questionKey is s<stageNum>-q<qIndex>
+            const sessionConfirmationKeyToCheck = `${currentLobbyId}_${dbCaseId}_${currentStudentTeamId}_${questionKeyToCheck}`;
+            if (confirmedQuestions[sessionConfirmationKeyToCheck]) {
+                confirmedCount++;
+            }
+        }
+        
+        console.log(`[DRILL.JS] Stage ${stageIndex} check: ${confirmedCount}/${totalQuestionsInStage} questions confirmed by team ${currentStudentTeamId}.`);
+
+        if (confirmedCount === totalQuestionsInStage) {
+            console.log(`[DRILL.JS] All questions in stage ${stageIndex} completed by team ${currentStudentTeamId}. Emitting studentStageComplete.`);
+            if (socket && currentLobbyId && currentStudentTeamId) {
+                socket.emit('studentStageComplete', {
+                    lobbyId: currentLobbyId,
+                    teamId: currentStudentTeamId,
+                    stageNumber: stageData.stageNumber, // Send actual stage number
+                    stageIndex: stageIndex // Send zero-based index if useful for server/teacher
+                });
+                notifiedStageCompletion[notificationKey] = true; // Mark as notified for this session
+            }
+        }
+    }
+
     if (nextStageBtn) {
         nextStageBtn.addEventListener('click', () => {
             if (isTeacher) {

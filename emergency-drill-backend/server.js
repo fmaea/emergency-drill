@@ -15,6 +15,7 @@ import Case from './models/Case.js'; // Ensure Case model is imported
 import authRoutes from './routes/authRoutes.js';
 import caseRoutes from './routes/caseRoutes.js';
 import lobbyRoutes from './routes/lobbyRoutes.js';
+import feedbackRoutes from './routes/feedbackRoutes.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -44,6 +45,7 @@ app.use('/js/lib', express.static(path.join(process.cwd(), 'js', 'lib'))); // �
 app.use('/api/auth', authRoutes);
 app.use('/api/cases', caseRoutes);
 app.use('/api/lobbies', lobbyRoutes);
+app.use('/api/feedback', feedbackRoutes);
 
 app.use((err, req, res, next) => {
     console.error("全局错误处理器捕获到错误:", err.stack);
@@ -292,6 +294,48 @@ io.on('connection', (socket) => {
           console.log(`[SERVER] Lobby ${lobbyId} removed after teacher ended drill.`);
       } else {
           console.warn(`[SERVER] teacherEndsDrill: Lobby ${lobbyId} not found.`);
+      }
+  });
+
+  socket.on('studentStageComplete', (data) => {
+      const { lobbyId, teamId, stageNumber, stageIndex /* if sent, or derive if needed */ } = data;
+      console.log(`[SERVER] Student team ${teamId} in lobby ${lobbyId} reported completion of stage number ${stageNumber} (index ${stageIndex}).`);
+
+      const lobby = global.activeLobbies[lobbyId];
+      if (!lobby) {
+          console.warn(`[SERVER] studentStageComplete: Lobby ${lobbyId} not found.`);
+          return;
+      }
+
+      const team = lobby.teams.find(t => t.id === teamId);
+      if (!team) {
+          console.warn(`[SERVER] studentStageComplete: Team ${teamId} not found in lobby ${lobbyId}.`);
+          return;
+      }
+
+      const teacherSocketId = lobby.teacherSocketId;
+      if (teacherSocketId) {
+          // Notify the specific teacher for that lobby
+          io.to(teacherSocketId).emit('teamStageProgressUpdate', {
+              teamId: teamId,
+              teamName: team.name, // Assuming team object has a 'name' property
+              stageNumber: stageNumber, // The 1-based stage number
+              stageIndex: stageIndex, // The 0-based stage index (if client sent it)
+              status: 'completed'
+          });
+          console.log(`[SERVER] Notified teacher ${teacherSocketId} about team ${team.name}'s completion of stage ${stageNumber}.`);
+          
+          // Optional: Mark stage completion in the server-side lobby.teams[teamIndex].stagesCompleted or similar
+          // This could be useful if the teacher disconnects and reconnects, or for overall progress tracking.
+          // For example:
+          // if (!team.stagesCompleted) {
+          //     team.stagesCompleted = {};
+          // }
+          // team.stagesCompleted[`stage_${stageNumber}`] = true; // or stageIndex
+          // io.to(lobbyId).emit('scoresUpdated', lobby.teams); // If you want to rebroadcast team data with this new info
+
+      } else {
+          console.warn(`[SERVER] studentStageComplete: Teacher not found (no teacherSocketId) for lobby ${lobbyId} to notify about team ${teamId}.`);
       }
   });
 
