@@ -195,6 +195,16 @@ document.addEventListener('DOMContentLoaded', () => {
                 button.disabled = true;
                 button.classList.add('opacity-50', 'cursor-not-allowed');
 
+                const token = localStorage.getItem('token');
+                if (!token) {
+                    feedbackPlaceholder.style.display = 'none'; // Hide loading message if it was shown
+                    feedbackContentDiv.innerHTML = `<p class="text-red-400">您需要登录才能获取AI点评。请返回首页重新登录。</p>`;
+                    button.disabled = false; // Re-enable button
+                    button.classList.remove('opacity-50', 'cursor-not-allowed');
+                    console.warn('[RESULTS.JS] AI Feedback: Auth token not found in localStorage.');
+                    return; // Stop further execution
+                }
+
                 const teamDataPayload = {
                     name: teamName,
                     score: teamScore,
@@ -214,7 +224,7 @@ document.addEventListener('DOMContentLoaded', () => {
                             'Content-Type': 'application/json',
                             // Add Authorization header if 'protect' middleware is used for this endpoint
                             // Assuming token is stored in localStorage from login
-                            'Authorization': `Bearer ${localStorage.getItem('token') || ''}`
+                            'Authorization': `Bearer ${token}`
                         },
                         body: JSON.stringify({
                             teamData: teamDataPayload,
