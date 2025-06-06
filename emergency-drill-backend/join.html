@@ -13,37 +13,37 @@
 </head>
 <body class="bg-gray-900 text-white">
     <div class="min-h-screen bg-cover bg-center flex items-center justify-center p-4" style="background-image: url('assets/login-bg.jpg');">
-        <div class="bg-gray-900 bg-opacity-80 backdrop-blur-sm p-8 sm:p-12 rounded-2xl shadow-2xl w-full max-w-md border border-gray-700">
-            <div class="text-center mb-8">
-                <i class="fa-solid fa-user-plus text-5xl text-cyan-400"></i>
-                <h1 class="text-3xl font-bold mt-4">加入应急推演</h1>
-                <p id="case-title-join" class="text-gray-400">正在加载案例信息...</p>
+        <div class="bg-gray-900 bg-opacity-80 backdrop-blur-sm p-6 sm:p-8 md:p-12 rounded-2xl shadow-2xl w-full max-w-md border border-gray-700">
+            <div class="text-center mb-6 sm:mb-8">
+                <i class="fa-solid fa-user-plus text-4xl sm:text-5xl text-cyan-400"></i>
+                <h1 class="text-2xl sm:text-3xl font-bold mt-3 sm:mt-4">加入应急推演</h1>
+                <p id="case-title-join" class="text-gray-400 text-sm sm:text-base mt-1">正在加载案例信息...</p>
             </div>
             
             <div>
-                <div class="mb-6">
-                    <label for="team-name" class="block mb-2 text-sm font-medium text-gray-300">队伍名称</label>
+                <div class="mb-5 sm:mb-6">
+                    <label for="team-name" class="block mb-1.5 sm:mb-2 text-sm font-medium text-gray-300">队伍名称</label>
                     <div class="relative">
                         <span class="absolute inset-y-0 left-0 flex items-center pl-3">
                             <i class="fa-solid fa-users text-gray-400"></i>
                         </span>
-                        <input type="text" id="team-name" class="bg-gray-800 border border-gray-600 text-white text-sm rounded-lg focus:ring-cyan-500 focus:border-cyan-500 block w-full pl-10 p-2.5" placeholder="例如：第一小组" required>
+                        <input type="text" id="team-name" class="bg-gray-800 border border-gray-600 text-white text-sm rounded-lg focus:ring-cyan-500 focus:border-cyan-500 block w-full pl-10 p-2 sm:p-2.5" placeholder="例如：第一小组" required>
                     </div>
                 </div>
-                <div class="mb-8">
-                    <label for="student-name" class="block mb-2 text-sm font-medium text-gray-300">你的名字</label>
+                <div class="mb-6 sm:mb-8">
+                    <label for="student-name" class="block mb-1.5 sm:mb-2 text-sm font-medium text-gray-300">你的名字</label>
                     <div class="relative">
                         <span class="absolute inset-y-0 left-0 flex items-center pl-3">
                             <i class="fa-solid fa-user text-gray-400"></i>
                         </span>
-                        <input type="text" id="student-name" class="bg-gray-800 border border-gray-600 text-white text-sm rounded-lg focus:ring-cyan-500 focus:border-cyan-500 block w-full pl-10 p-2.5" placeholder="请输入你的姓名" required>
+                        <input type="text" id="student-name" class="bg-gray-800 border border-gray-600 text-white text-sm rounded-lg focus:ring-cyan-500 focus:border-cyan-500 block w-full pl-10 p-2 sm:p-2.5" placeholder="请输入你的姓名" required>
                     </div>
                 </div>
                 
-                <button id="join-button" class="w-full text-white bg-cyan-600 hover:bg-cyan-700 focus:ring-4 focus:outline-none focus:ring-cyan-800 font-medium rounded-lg text-lg px-5 py-3 text-center transition-transform transform hover:scale-105">
+                <button id="join-button" class="w-full text-white bg-cyan-600 hover:bg-cyan-700 focus:ring-4 focus:outline-none focus:ring-cyan-800 font-medium rounded-lg text-base sm:text-lg px-5 py-2.5 sm:py-3 text-center transition-transform transform hover:scale-105">
                     确认加入
                 </button>
-                <p id="status-message" class="text-center text-green-400 mt-4 h-4"></p>
+                <p id="status-message" class="text-center text-green-400 mt-3 sm:mt-4 h-4 text-sm"></p>
             </div>
         </div>
     </div>
