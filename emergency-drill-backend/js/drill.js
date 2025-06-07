@@ -16,59 +16,80 @@ document.addEventListener('DOMContentLoaded', async function () {
     const timerElement = document.getElementById('stage-timer');
     const leaderboardElement = document.getElementById('leaderboard');
     const forceEndBtn = document.getElementById('force-end-btn');
+
+    // Volume Control DOM Elements
+    const volumeControlsContainer = document.getElementById('volume-controls-container');
+    const volumeDownBtn = document.getElementById('volume-down-btn');
+    const volumeUpBtn = document.getElementById('volume-up-btn');
+    const muteBtn = document.getElementById('mute-btn');
     
+    // --- Sound Effect Variables ---
+    let currentAmbientSound = null;
+    const caseBSoundPaths = { // These paths are generic, the trigger ID changes
+        stage1: 'assets/caseB/sounds/风雪声.mp3',
+        stage2: 'assets/caseB/sounds/风雪声.mp3',
+        stage3: 'assets/caseB/sounds/river.mp3',
+        stage4: 'assets/caseB/sounds/施工声音.mp3',
+    };
+    let currentDrillCaseId = null; // To store the specific case ID like 'caseA', '68332aee004ada38db5cfd38'
+    let userInteracted = false; // To help with autoplay policies
+
+    // Volume Control State Variables
+    let currentVolume = 0.7;
+    let isMuted = false;
+    const VOLUME_STEP = 0.1;
+
+
     // --- 2. 状态变量初始化 ---
     let currentStageIndex = 0; 
     let currentCaseData = null;  
     let timerInterval;
-    let isPaused = false;
-    // let socket = null; // WebSocket 实例 (当前版本未启用) - Will be initialized
-    window.drillMap = null; // 高德地图实例 (如果案例需要)
+    let isPaused = false; // Drill pause state, not sound mute state
+    window.drillMap = null;
 
-    let teamsData = []; // 存储队伍信息，将从localStorage加载
-    // 【修改】假设教师端操作的是第一个实际队伍的视角进行答题和计分模拟
+    let teamsData = [];
     let currentOperatingTeamId = null; 
 
-    // At the top with other state variables:
      let socket; 
      let currentStudentTeamId = null;
      let currentLobbyId = null;
-     let dbCaseId = null; // To avoid confusion with urlParams.get('caseId') which might be just 'caseId' string
-     let isTeacher = false; // We need a way to determine if the user is a teacher
-     let currentSelections = {}; // To store selections before confirmation
-     let confirmedQuestions = {}; // To track { lobbyId_caseId_teamId_questionKey: true }
+     let dbCaseId = null;
+     let isTeacher = false;
+     let currentSelections = {};
+     let confirmedQuestions = {};
 
     // --- 3. 页面启动逻辑 ---
     const urlParams = new URLSearchParams(window.location.search);
-    const caseId = urlParams.get('caseId');
+    const caseIdFromUrl = urlParams.get('caseId');
 
-    if (!caseId) {
+    if (!caseIdFromUrl) {
         handleFatalError("错误：URL中未找到caseId，请从案例库进入。");
         return;
     }
+    currentDrillCaseId = caseIdFromUrl;
+    // console.log('[SOUND DEBUG] currentDrillCaseId set to:', currentDrillCaseId); // Keep this one for initial check
 
     try {
-        // Inside the main DOMContentLoaded try block, after fetching caseId from URL:
-        dbCaseId = caseId; // Store the actual caseId from URL params
+        dbCaseId = caseIdFromUrl;
         currentStudentTeamId = localStorage.getItem('currentStudentTeamId');
         currentLobbyId = localStorage.getItem('currentLobbyId');
         
-        const userRole = localStorage.getItem('userRoleForDrill');
-        if (userRole === 'teacher') {
+        const userRoleForDrill = localStorage.getItem('userRoleForDrill');
+        if (userRoleForDrill === 'teacher') {
             isTeacher = true;
             console.log('[DRILL.JS] Running as Teacher (identified by userRoleForDrill flag).');
-            localStorage.removeItem('userRoleForDrill'); // Clean up the flag after use
-            // currentStudentTeamId will remain null or as previously set for teacher if they were also a student (unlikely)
+            localStorage.removeItem('userRoleForDrill');
+            if (volumeControlsContainer) volumeControlsContainer.style.display = 'flex';
+            initializeVolumeControls();
+            updateMuteButtonUI();
         } else {
             isTeacher = false; 
-            // currentStudentTeamId should have been loaded earlier from localStorage.
-            // If not, it means this is a student who somehow skipped the join localStorage setup.
             if (!currentStudentTeamId) {
                 console.warn('[DRILL.JS] Running as Student, but currentStudentTeamId is not found in localStorage. UI might not function correctly for student-specific actions.');
             }
             console.log(`[DRILL.JS] Running as Student. Team ID: ${currentStudentTeamId}, Lobby ID: ${currentLobbyId}`);
+            if (volumeControlsContainer) volumeControlsContainer.style.display = 'none';
         }
-        // The old logic `!currentStudentTeamId && localStorage.getItem('token')` is now superseded by the explicit flag for teachers.
 
         socket = io(window.location.protocol + '//' + window.location.hostname + ':7890', { transports: ['websocket'] });
 
@@ -84,60 +105,72 @@ document.addEventListener('DOMContentLoaded', async function () {
             console.error('[DRILL.JS] WebSocket connection error:', error);
         });
 
-        // Placeholder for future listeners like 'advanceToStage', 'scoresUpdated'
         socket.on('advanceToStage', (data) => {
            console.log('[DRILL.JS] Received advanceToStage event:', data);
-           if (!isTeacher) { // Students advance based on server command
+           if (!isTeacher) {
                setActiveStage(data.nextStageIndex);
            }
         });
 
         socket.on('scoresUpdated', (updatedTeamsData) => {
             console.log('[DRILL.JS] Received scoresUpdated event:', updatedTeamsData);
-            teamsData = updatedTeamsData; // Update local teamsData with server's authoritative state
-            updateLeaderboard(); // Re-render the leaderboard
+            teamsData = updatedTeamsData;
+            updateLeaderboard();
         });
 
         socket.on('drillCompleted', (data) => {
             console.log('[DRILL.JS] Received drillCompleted event:', data);
-            // Update local teamsData one last time
+            if (currentAmbientSound) {
+                // console.log('[SOUND DEBUG] Drill completed, stopping sound.');
+                currentAmbientSound.pause();
+                currentAmbientSound = null;
+            }
             if (data.finalTeamsData) {
                 teamsData = data.finalTeamsData;
                 updateLeaderboard();
             }
-            
-            // Display a message and prepare for results page
             alert('本次推演已正式结束！点击“确定”查看最终结果。');
-            
             localStorage.setItem('userRoleForResults', isTeacher ? 'teacher' : 'student');
-            // Save final data for results page (teacher might have already done part of this)
             localStorage.setItem('drillResults', JSON.stringify(teamsData));
-            if (currentCaseData && currentCaseData.title) { // currentCaseData should be loaded
+            if (currentCaseData && currentCaseData.title) {
                 localStorage.setItem('currentCaseTitle', currentCaseData.title.replace(/\\/g, '').trim());
-            } else if (dbCaseId) { // Fallback if currentCaseData is not fully loaded but we have the ID
-                // Attempt to get title from existing lobby data if available, or just use ID
+            } else if (dbCaseId) {
                 const storedCaseTitle = teamsData.length > 0 ? (teamsData[0].caseTitle || dbCaseId) : dbCaseId;
                 localStorage.setItem('currentCaseTitle', storedCaseTitle);
             }
-
-            // Navigate to results page
-            // Ensure forceEndBtn is available or construct the URL
-            if (forceEndBtn && forceEndBtn.href && isTeacher) { // Teachers might use their existing button's URL
+            if (forceEndBtn && forceEndBtn.href && isTeacher) {
                  window.location.href = forceEndBtn.href;
-            } else { // Students or fallback
-                 window.location.href = `results.html?caseId=${dbCaseId}`;
+            } else {
+                 window.location.href = `results.html?caseId=${currentDrillCaseId}`;
             }
         });
 
-        // 从localStorage加载队伍信息
+        socket.on('drillPausedByTeacher', (data) => {
+            if (!isTeacher) {
+                isPaused = data.isPaused;
+                if (isPaused) {
+                    // console.log('[SOUND DEBUG] Teacher pause event: Pausing sound.', currentAmbientSound ? currentAmbientSound.src : 'No current sound');
+                    if (currentAmbientSound) currentAmbientSound.pause();
+                    if(pauseBtn) pauseBtn.innerHTML = '<i class="fas fa-pause mr-2"></i>教师已暂停';
+                    if(timerElement) timerElement.classList.add('animate-pulse');
+                } else {
+                    // console.log('[SOUND DEBUG] Teacher resume event: Attempting to resume sound.', currentAmbientSound ? currentAmbientSound.src : 'No current sound');
+                    if (currentAmbientSound && currentDrillCaseId === '68332aee004ada38db5cfd38' && userInteracted) {
+                        currentAmbientSound.play().catch(error => console.error('[SOUND ERROR] Error resuming sound via teacher event:', error));
+                    }
+                     if(pauseBtn) pauseBtn.innerHTML = '<i class="fas fa-play mr-2"></i>推演进行中';
+                     if(timerElement) timerElement.classList.remove('animate-pulse');
+                }
+            }
+        });
+
         const storedTeams = localStorage.getItem('drillTeams');
         if (storedTeams) {
             teamsData = JSON.parse(storedTeams);
-            teamsData.forEach(team => { // 确保每个队伍对象都有score和answers属性
+            teamsData.forEach(team => {
                 if (team.score === undefined) team.score = 0;
                 if (team.answers === undefined) team.answers = {};
             });
-            // 【修改】如果队伍存在，默认操作第一个队伍 (如果不是占位符)
             const firstActualTeam = teamsData.find(t => t.id !== 'placeholder' && t.id !== 'no-teams');
             if (firstActualTeam) {
                 currentOperatingTeamId = firstActualTeam.id;
@@ -148,8 +181,7 @@ document.addEventListener('DOMContentLoaded', async function () {
             console.warn("[DRILL] 未能从localStorage加载队伍信息。");
         }
         if (teamsData.filter(t => t.id !== 'placeholder' && t.id !== 'no-teams').length === 0) { 
-             // 如果过滤后没有真实队伍，可以添加一个默认的教师操作队伍
-            if (!teamsData.find(t => t.id === 'teacher_ops_team')) { // 避免重复添加
+            if (!teamsData.find(t => t.id === 'teacher_ops_team')) {
                 const teacherTeam = {id: 'teacher_ops_team', name: "教师演示", score: 0, answers: {}};
                 teamsData.push(teacherTeam);
                 if (!currentOperatingTeamId) currentOperatingTeamId = teacherTeam.id;
@@ -163,13 +195,10 @@ document.addEventListener('DOMContentLoaded', async function () {
         console.log('成功获取案例数据:', JSON.parse(JSON.stringify(currentCaseData)));
         
         initializeDrillUI(currentCaseData);
-        // initializeWebSocket(); // WebSocket相关功能，待后续集成
 
-        // Conditional UI for Teacher/Student (placed after DOM elements are defined, but functionally here)
         if (!isTeacher) {
             if (nextStageBtn) nextStageBtn.style.display = 'none';
             if (pauseBtn) pauseBtn.style.display = 'none';
-            // forceEndBtn might also be hidden for students, or re-purposed to "Exit"
             if (forceEndBtn) forceEndBtn.style.display = 'none'; 
         }
         
@@ -185,17 +214,16 @@ document.addEventListener('DOMContentLoaded', async function () {
         if (pauseBtn) pauseBtn.disabled = true;
     }
 
-    // --- 4. UI和计时器初始化 ---
     function initializeDrillUI(caseData) {
         if (!caseData || !caseData.title) {
             handleFatalError("错误：传入的案例数据无效。");
             return;
         }
         if (headerCaseTitleElement) headerCaseTitleElement.textContent = `案例: ${caseData.title.replace(/\[cite: \d+\]/g, '').trim()}`;
-        if (forceEndBtn) forceEndBtn.href = `results.html?caseId=${caseId}`;
+        if (forceEndBtn) forceEndBtn.href = `results.html?caseId=${currentDrillCaseId}`;
         
-        startTimer(caseData.estimatedTime ? caseData.estimatedTime * 60 : 180 * 60); // 默认180分钟
-        updateLeaderboard(); // 初始化排行榜显示
+        startTimer(caseData.estimatedTime ? caseData.estimatedTime * 60 : 180 * 60);
+        updateLeaderboard();
         
         if (caseData.stages && caseData.stages.length > 0) {
             setActiveStage(0);
@@ -212,8 +240,6 @@ document.addEventListener('DOMContentLoaded', async function () {
                 if (timer < 0) {
                     clearInterval(timerInterval);
                     if (timerElement) timerElement.textContent = "时间到";
-                    // 可选：时间到自动提交并进入下一阶段
-                    // calculateScoresAndProceed(); 
                 } else {
                     const minutes = Math.floor(timer / 60);
                     const seconds = timer % 60;
@@ -224,38 +250,138 @@ document.addEventListener('DOMContentLoaded', async function () {
         }, 1000);
     }
 
-    // --- 5. 核心：设置和渲染指定阶段 ---
     function setActiveStage(stageIndex) {
         if (!currentCaseData || !currentCaseData.stages || !currentCaseData.stages[stageIndex]) {
             console.error(`无法设置阶段 ${stageIndex}：案例数据不完整或阶段索引无效。`);
             if (headerStageTitleElement) headerStageTitleElement.textContent = '阶段加载错误';
             return;
         }
-        
         currentStageIndex = stageIndex;
         const stageData = currentCaseData.stages[stageIndex];
-
         if (headerStageTitleElement) {
             headerStageTitleElement.textContent = (stageData.title || `阶段 ${stageData.stageNumber}`).replace(/\[cite: \d+\]/g, '').trim();
         }
-
         stagePanels.forEach((panel, index) => {
-            if (panel) { // 确保panel元素存在
+            if (panel) {
                 panel.classList.toggle('stage-active', index === stageIndex);
             }
         });
-
-        // 确保只对当前激活的面板进行渲染
         if (stagePanels[stageIndex]) {
             renderStageContent(stagePanels[stageIndex], stageData);
         } else {
             console.error(`错误：找不到阶段 ${stageIndex} 的面板元素 (stagePanels[${stageIndex}])`);
         }
-
         if (nextStageBtn) {
             nextStageBtn.innerHTML = (stageIndex >= currentCaseData.stages.length - 1) ? "完成推演" : "提交并进入下一阶段";
         }
+        playCaseBSound(stageIndex + 1);
     }
+
+    // --- Volume Control Functions ---
+    function initializeVolumeControls() {
+        if (!volumeUpBtn || !volumeDownBtn || !muteBtn) {
+            console.warn('[SOUND WARN] Volume control buttons not all found.'); // Changed prefix
+            return;
+        }
+
+        volumeUpBtn.addEventListener('click', () => {
+            isMuted = false;
+            currentVolume = Math.min(1.0, parseFloat((currentVolume + VOLUME_STEP).toFixed(1)));
+            applyVolumeChange();
+            // console.log('[SOUND DEBUG] Volume Up clicked. New volume:', currentVolume);
+        });
+
+        volumeDownBtn.addEventListener('click', () => {
+            isMuted = false;
+            currentVolume = Math.max(0.0, parseFloat((currentVolume - VOLUME_STEP).toFixed(1)));
+            applyVolumeChange();
+            // console.log('[SOUND DEBUG] Volume Down clicked. New volume:', currentVolume);
+        });
+
+        muteBtn.addEventListener('click', () => {
+            isMuted = !isMuted;
+            applyVolumeChange();
+            // console.log('[SOUND DEBUG] Mute button clicked. isMuted:', isMuted);
+        });
+    }
+
+    function applyVolumeChange() {
+        if (currentAmbientSound) {
+            currentAmbientSound.volume = isMuted ? 0 : currentVolume;
+        }
+        updateMuteButtonUI();
+        // console.log('[SOUND DEBUG] Applying volume. Actual sound volume set to:', isMuted ? 0 : currentVolume);
+    }
+
+    function updateMuteButtonUI() {
+        if (!muteBtn) return;
+        const icon = muteBtn.querySelector('i');
+        if (!icon) return;
+
+        if (isMuted || currentVolume === 0) {
+            muteBtn.title = '取消静音 (Unmute)';
+            icon.className = 'fas fa-volume-off';
+        } else {
+            muteBtn.title = '静音 (Mute)';
+            icon.className = 'fas fa-volume-mute';
+        }
+    }
+
+    // --- Sound Control Function ---
+    function playCaseBSound(stageNumber) {
+        // console.log('[SOUND DEBUG] playCaseBSound called for stage:', stageNumber);
+        // console.log('[SOUND DEBUG] currentDrillCaseId inside playCaseBSound:', currentDrillCaseId);
+        // console.log('[SOUND DEBUG] userInteracted state:', userInteracted);
+        // console.log('[SOUND DEBUG] isPaused state:', isPaused);
+
+        if (currentAmbientSound) {
+            // console.log('[SOUND DEBUG] Pausing previous sound:', currentAmbientSound ? currentAmbientSound.src : 'null');
+            currentAmbientSound.pause();
+            currentAmbientSound.oncanplaythrough = null;
+            currentAmbientSound.onerror = null;
+            currentAmbientSound = null;
+        }
+
+        // console.log(`[SOUND DEBUG] Evaluating conditions: (currentDrillCaseId === "68332aee004ada38db5cfd38": ${currentDrillCaseId === "68332aee004ada38db5cfd38"}), (userInteracted: ${userInteracted}), (!isPaused: ${!isPaused})`);
+        if (currentDrillCaseId !== '68332aee004ada38db5cfd38' || !userInteracted || isPaused) {
+            // console.log('[SOUND DEBUG] Conditions for sound play NOT MET. Returning from playCaseBSound.');
+            return;
+        }
+
+        const soundPath = caseBSoundPaths['stage' + stageNumber];
+        // console.log('[SOUND DEBUG] Sound path determined:', soundPath);
+
+        if (soundPath) {
+            // console.log('[SOUND DEBUG] Creating new Audio object with path:', soundPath);
+            currentAmbientSound = new Audio(soundPath);
+            currentAmbientSound.loop = true;
+            currentAmbientSound.volume = isMuted ? 0 : currentVolume;
+
+            currentAmbientSound.oncanplaythrough = () => {
+                // console.log('[SOUND DEBUG] Audio oncanplaythrough event for path:', soundPath);
+                currentAmbientSound.play()
+                    .then(() => {
+                        // console.log('[SOUND DEBUG] audio.play() initiated for:', soundPath);
+                    })
+                    .catch(error => {
+                        console.error(`[SOUND ERROR] Play promise failed for stage ${stageNumber} (${soundPath}):`, error); // Keep and adjust
+                        if (error.name === 'NotAllowedError') {
+                            console.warn('[SOUND WARN] Playback prevented by browser policy. User interaction might be required again.'); // Keep and adjust
+                            userInteracted = false;
+                            currentAmbientSound = null;
+                        }
+                    });
+            };
+            currentAmbientSound.onerror = (e) => {
+                console.error(`[SOUND ERROR] Audio onerror for stage ${stageNumber} (${soundPath}). Code:`, currentAmbientSound.error ? currentAmbientSound.error.code : 'N/A', 'Message:', currentAmbientSound.error ? currentAmbientSound.error.message : 'N/A'); // Keep and adjust
+                currentAmbientSound = null;
+            };
+            currentAmbientSound.load();
+        } else {
+            // console.log(`[SOUND DEBUG] No sound defined for sound set linked to this case, stage ${stageNumber}`);
+        }
+    }
+
 
     // --- 6. 核心：渲染每个阶段的动态内容 ---
     function renderStageContent(panelElement, stageData) {
@@ -263,7 +389,7 @@ document.addEventListener('DOMContentLoaded', async function () {
             console.warn(`[渲染错误] 阶段 ${stageData ? stageData.stageNumber : '未知'}：缺少面板元素或阶段数据`);
             return;
         }
-        console.log(`[渲染开始] 阶段 ${stageData.stageNumber}`, JSON.parse(JSON.stringify(stageData)));
+        // console.log(`[渲染开始] 阶段 ${stageData.stageNumber}`, JSON.parse(JSON.stringify(stageData))); // Commented out
 
         const taskTitleElement = panelElement.querySelector('.stage-task-title');
         if (taskTitleElement) {
@@ -391,23 +517,19 @@ document.addEventListener('DOMContentLoaded', async function () {
                         const confirmButton = document.createElement('button');
                         confirmButton.textContent = '确认答案';
                         confirmButton.className = 'confirm-answer-btn mt-2 px-3 py-1.5 text-sm bg-green-600 hover:bg-green-700 text-white rounded-md shadow focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 focus:ring-offset-gray-800';
-                        confirmButton.dataset.questionKey = questionId; // questionId is s<stageNum>-q<qIndex>
+                        confirmButton.dataset.questionKey = questionId;
                         confirmButton.dataset.stageNum = stageData.stageNumber;
                         confirmButton.dataset.qIndex = qIndex;
                         confirmButton.dataset.questionType = question.questionType;
                         
-                        // Check if this question was already confirmed by this team in this session
                         const confirmationKey = `${currentLobbyId}_${dbCaseId}_${currentStudentTeamId}_${questionId}`;
                         if (confirmedQuestions[confirmationKey]) {
                             confirmButton.disabled = true;
                             confirmButton.textContent = '已确认';
-                            // Also disable inputs for this question if confirmed (done by lockQuestionInputs)
                         }
                         questionWrapper.appendChild(confirmButton);
                         if (confirmedQuestions[confirmationKey]) {
-                            // confirmButton.disabled = true; // Already set above
-                            // confirmButton.textContent = '已确认'; // Already set above
-                            lockQuestionInputs(questionId, confirmButton); // Call to disable options too
+                            lockQuestionInputs(questionId, confirmButton);
                         }
                     }
 
@@ -451,8 +573,7 @@ document.addEventListener('DOMContentLoaded', async function () {
                         }
                         
                         if (!specificContainerFound && targetQuestionContainer) { 
-                             // For 3rd question onwards in stage 2, append to the main question container for stage 2
-                             questionWrapper.className = 'mt-6 dynamic-question-block p-3 bg-gray-800/50 rounded-lg'; // Add some top margin
+                             questionWrapper.className = 'mt-6 dynamic-question-block p-3 bg-gray-800/50 rounded-lg';
                              targetQuestionContainer.appendChild(questionWrapper);
                         }
                     } else { 
@@ -461,20 +582,17 @@ document.addEventListener('DOMContentLoaded', async function () {
                 });
             }
         } else { 
-            console.log(`[阶段${stageData.stageNumber}] 无问题数据 (questions 数组不存在或为空)。`);
+            // console.log(`[阶段${stageData.stageNumber}] 无问题数据 (questions 数组不存在或为空)。`); // Commented out
         }
     }
     
-    
     function handleAnswerSelection(operatingTeamIdForTeacher, stageNum, questionIndex, questionType, targetElement) {
-        const questionKey = `s${stageNum}-q${questionIndex}`; // questionKey is s<stageNum>-q<qIndex>
+        const questionKey = `s${stageNum}-q${questionIndex}`;
         let selectedValue = targetElement.value;
         if (targetElement.tagName === 'BUTTON' && targetElement.dataset.value) {
             selectedValue = targetElement.dataset.value;
         }
-
         if (!isTeacher) {
-            // Student is selecting, store temporarily
             if (questionType === 'MultipleChoice-Multi') {
                 if (!currentSelections[questionKey] || !Array.isArray(currentSelections[questionKey])) {
                     currentSelections[questionKey] = [];
@@ -485,15 +603,14 @@ document.addEventListener('DOMContentLoaded', async function () {
                 } else {
                     if (currentValueIndex > -1) currentSelections[questionKey].splice(currentValueIndex, 1);
                 }
-            } else { // Radio, Binary-Decision (where value is on button)
+            } else {
                 currentSelections[questionKey] = [selectedValue];
             }
-            console.log(`[DRILL.JS] Student temp selection for ${questionKey}:`, currentSelections[questionKey]);
+            // console.log(`[DRILL.JS] Student temp selection for ${questionKey}:`, currentSelections[questionKey]); // Commented out
         } else if (isTeacher && operatingTeamIdForTeacher) {
-            // Teacher's existing simulation logic (can remain as is for now)
             const team = teamsData.find(t => t.id === operatingTeamIdForTeacher);
             if (team) {
-                if (!team.answers) team.answers = {}; // Ensure answers object exists
+                if (!team.answers) team.answers = {};
                 if (questionType === 'MultipleChoice-Multi') {
                     if (!team.answers[questionKey] || !Array.isArray(team.answers[questionKey])) {
                         team.answers[questionKey] = [];
@@ -507,42 +624,34 @@ document.addEventListener('DOMContentLoaded', async function () {
                 } else {
                     team.answers[questionKey] = [selectedValue];
                 }
-                console.log(`[DRILL.JS] Teacher operating for team ${team.name} (${team.id}) on ${questionKey}, answers:`, team.answers[questionKey]);
+                // console.log(`[DRILL.JS] Teacher operating for team ${team.name} (${team.id}) on ${questionKey}, answers:`, team.answers[questionKey]); // Commented out
             }
         }
     }
 
     function lockQuestionInputs(questionKey, confirmButtonElement) {
-        // Find the question container. Assuming questions are in elements with class 'question-item'
-        // and we can find it by finding an element that contains an input with name=questionKey or a button with data-question-key
         let questionWrapper = null;
         if (confirmButtonElement) {
             questionWrapper = confirmButtonElement.closest('.question-item');
         }
-        // Fallback or alternative: document.querySelector(`.question-item [name="${questionKey}"]`)?.closest('.question-item');
-        // This part needs robust targeting of the question's inputs.
-
         if (questionWrapper) {
-            const inputs = questionWrapper.querySelectorAll('input[type="radio"], input[type="checkbox"], .question-item button'); // Include answer buttons if they are part of options
+            const inputs = questionWrapper.querySelectorAll('input[type="radio"], input[type="checkbox"], .question-item button');
             inputs.forEach(input => {
-                // Don't disable the already clicked confirm button again if it's part of 'inputs'
                 if (input !== confirmButtonElement && !input.classList.contains('confirm-answer-btn')) {
                    input.disabled = true;
                 }
             });
-            // Style the wrapper to indicate it's locked
-            questionWrapper.classList.add('opacity-70', 'pointer-events-none'); // Example styling
+            questionWrapper.classList.add('opacity-70', 'pointer-events-none');
         } else {
             console.warn(`[DRILL.JS] Could not find question wrapper for ${questionKey} to lock inputs.`);
         }
-        
         if (confirmButtonElement) {
             confirmButtonElement.disabled = true;
             confirmButtonElement.textContent = '已确认';
             confirmButtonElement.classList.remove('bg-green-600', 'hover:bg-green-700');
             confirmButtonElement.classList.add('bg-gray-500');
         }
-        console.log(`[DRILL.JS] Inputs locked for question ${questionKey}`);
+        // console.log(`[DRILL.JS] Inputs locked for question ${questionKey}`); // Commented out
     }
 
     function calculateScoresAndProceed() {
@@ -552,30 +661,17 @@ document.addEventListener('DOMContentLoaded', async function () {
             proceedToNextStageOrEnd();
             return;
         }
-
         teamsData.forEach(team => {
             if(team.id === 'placeholder' || team.id === 'no-teams') return; 
-            // 【修改】确保只为当前操作的队伍（或所有队伍，如果需要）计分
             if (!currentOperatingTeamId || team.id !== currentOperatingTeamId) {
-                 // 如果您希望所有队伍都根据教师端的选择（或一个预设答案）计分，
-                 // 您需要修改这里的逻辑，或者从服务器获取每个队伍的答案。
-                 // 当前，只有 currentOperatingTeamId 的答案会被记录和计分。
-                 // 为了演示，我们也可以让所有队伍都获得分数。
-                 // return; // 如果只想为操作的队伍计分，取消此注释
             }
-
-
             let stageScoreForTeam = 0;
             stageData.questions.forEach((question, qIndex) => {
                 const questionKey = `s${stageData.stageNumber}-q${qIndex}`;
                 const correctOptions = (question.answerOptions || [])
                                         .filter(opt => opt.isCorrect === true) 
                                         .map(opt => opt.text.replace(/"/g, '&quot;'));
-                
-                // 【修改】确保team.answers存在才访问
                 const teamAnswersForQuestion = team.answers && team.answers[questionKey] ? team.answers[questionKey] : [];
-
-
                 let isCorrectForThisQuestion = false;
                 if (correctOptions.length > 0) { 
                     if (question.questionType === 'MultipleChoice-Multi') {
@@ -586,22 +682,19 @@ document.addEventListener('DOMContentLoaded', async function () {
                         isCorrectForThisQuestion = teamAnswersForQuestion.length === 1 && correctOptions.includes(teamAnswersForQuestion[0]);
                     }
                 }
-
                 if (isCorrectForThisQuestion) {
                     stageScoreForTeam += (question.points || 0);
                 }
             });
             team.score += stageScoreForTeam;
             console.log(`团队 ${team.name} 在阶段 ${stageData.stageNumber} 获得 ${stageScoreForTeam} 分，总分: ${team.score}`);
-            
             stageData.questions.forEach((_, qIndex) => {
                 const questionKeyToClear = `s${stageData.stageNumber}-q${qIndex}`;
-                if (team.answers) { // 确保answers对象存在
+                if (team.answers) {
                     delete team.answers[questionKeyToClear];
                 }
             });
         });
-
         updateLeaderboard();
         proceedToNextStageOrEnd();
     }
@@ -672,87 +765,74 @@ document.addEventListener('DOMContentLoaded', async function () {
     // --- 7. 事件监听器 ---
     document.body.addEventListener('click', function(event) {
         if (event.target.classList.contains('confirm-answer-btn')) {
-            if (isTeacher || event.target.disabled) return; // Only students, and only if not already confirmed
-
+            if (isTeacher || event.target.disabled) return;
             const button = event.target;
             const questionKey = button.dataset.questionKey;
             const stageNum = parseInt(button.dataset.stageNum, 10);
             const qIndex = parseInt(button.dataset.qIndex, 10);
-            // const questionType = button.dataset.questionType; // Already available from question object
-
             const selectedAnswer = currentSelections[questionKey];
-
             if (!selectedAnswer || selectedAnswer.length === 0) {
                 alert('请先选择一个答案，然后再确认。');
                 return;
             }
-
             if (confirm(`确认提交问题 "${questionKey}" 的答案吗？一旦确认，将无法修改。`)) {
-                console.log(`[DRILL.JS] Student confirmed answer for ${questionKey}:`, selectedAnswer);
-                
+                // console.log(`[DRILL.JS] Student confirmed answer for ${questionKey}:`, selectedAnswer); // Commented out
                 if (socket && currentStudentTeamId && currentLobbyId && dbCaseId) {
                     socket.emit('studentSubmitAnswer', {
                         lobbyId: currentLobbyId,
                         caseId: dbCaseId,
                         questionKey: questionKey,
-                        answerData: selectedAnswer, // Send the stored selection
+                        answerData: selectedAnswer,
                         teamId: currentStudentTeamId,
                         stageNumber: stageNum,
                         questionIndex: qIndex
                     });
                 }
-                lockQuestionInputs(questionKey, button); // Pass the button itself
-                
-                // Track confirmed questions for this session to persist disabled state on re-renders (e.g. if stage reloaded)
+                lockQuestionInputs(questionKey, button);
                 const confirmationKey = `${currentLobbyId}_${dbCaseId}_${currentStudentTeamId}_${questionKey}`;
                 confirmedQuestions[confirmationKey] = true;
-
-                // Check for stage completion (moved to Phase 3 of the plan)
             }
         }
     });
+
     if (nextStageBtn) {
         nextStageBtn.addEventListener('click', () => {
+            if (!userInteracted) {
+                userInteracted = true;
+                // console.log('[SOUND DEBUG] nextStageBtn clicked, userInteracted being set to true.');
+                if (currentDrillCaseId === '68332aee004ada38db5cfd38' && currentCaseData && currentCaseData.stages[currentStageIndex] && !isPaused) {
+                    // console.log('[SOUND DEBUG] nextStageBtn attempting to call playCaseBSound for stage:', currentStageIndex + 1);
+                     playCaseBSound(currentStageIndex + 1);
+                }
+            }
             if (isTeacher) {
-                console.log('[DRILL.JS] Teacher clicked Next Stage/Complete Drill.');
-                // Server will advance stage for students. Teacher UI might also listen to 'advanceToStage'.
-                // Teacher no longer calculates scores locally for all teams this way.
-                // Scores are updated via 'scoresUpdated' event from server.
-                
+                // console.log('[DRILL.JS] Teacher clicked Next Stage/Complete Drill.'); // Commented out
                 if (currentStageIndex >= currentCaseData.stages.length - 1) {
                     if (confirm('所有阶段已完成！确认结束本次推演吗？教师将结束所有学生的推演。')) {
-                        // Notify server that drill is ending
+                        if (currentAmbientSound) { currentAmbientSound.pause(); currentAmbientSound = null; }
                         if (socket && currentLobbyId) {
                              socket.emit('teacherEndsDrill', { lobbyId: currentLobbyId });
                         }
-                        // Teacher specific: save their view of teamsData for results (or rely on server's final version)
                         localStorage.setItem('drillResults', JSON.stringify(teamsData));
                         localStorage.setItem('currentCaseTitle', currentCaseData.title.replace(/\\/g, '').trim());
                         if (forceEndBtn && forceEndBtn.href) {
                             window.location.href = forceEndBtn.href;
                         } else {
-                            window.location.href = `results.html?caseId=${dbCaseId}`;
+                            window.location.href = `results.html?caseId=${currentDrillCaseId}`;
                         }
                     }
                 } else {
-                    // Teacher requests server to advance stage
                     if (socket && currentLobbyId && dbCaseId) {
-                        // Pass current teamsData as a snapshot if server needs it for any reason before advancing
-                        // Or rely on server having the latest scores.
                         socket.emit('teacherRequestsNextStage', {
                             lobbyId: currentLobbyId,
                             caseId: dbCaseId,
                             currentStageIndex: currentStageIndex,
-                            teamsDataSnapshot: teamsData // Teacher's view of teamsData
+                            teamsDataSnapshot: teamsData
                         });
-                        // Teacher's own UI advances. Students will advance via 'advanceToStage' event.
                         setActiveStage(currentStageIndex + 1);
                     }
                 }
             } else {
-                // Student view: Next stage button should ideally be disabled or not present.
-                // Stage progression for students is handled by 'advanceToStage' event from server.
-                // If it's visible and clickable, it should do nothing or show a message.
                 alert('请等待教师进入下一阶段。');
             }
         });
@@ -760,19 +840,20 @@ document.addEventListener('DOMContentLoaded', async function () {
 
     if (forceEndBtn) {
         forceEndBtn.addEventListener('click', (event) => {
-            // event.preventDefault(); // 如果 forceEndBtn 是 <a> 标签，阻止其默认跳转
             if (confirm('确定要强制结束本次推演并查看结果吗？')) {
-                // 【新增】在强制结束时保存团队分数
+                if (currentAmbientSound) {
+                    // console.log('[SOUND DEBUG] Force end: Stopping sound.');
+                    currentAmbientSound.pause();
+                    currentAmbientSound = null;
+                }
                 if (currentCaseData && teamsData) {
                     localStorage.setItem('userRoleForResults', 'teacher'); 
                     localStorage.setItem('drillResults', JSON.stringify(teamsData));
-                    localStorage.setItem('currentCaseTitle', currentCaseData.title); // 【新增】同时保存案例标题
+                    localStorage.setItem('currentCaseTitle', currentCaseData.title);
                     console.log('推演强制结束，团队分数已保存到localStorage:', teamsData);
                 }
-                // 确保href属性已在HTML中正确设置，或者在此处用JS跳转
-                // window.location.href = `results.html?caseId=${caseId}`; // 如果 forceEndBtn 不是 a 标签，或需要动态 caseId
             } else {
-                 event.preventDefault(); // 如果用户取消，则阻止跳转
+                 event.preventDefault();
             }
         });
     }
@@ -780,16 +861,20 @@ document.addEventListener('DOMContentLoaded', async function () {
     function proceedToNextStageOrEnd() {
         if (currentStageIndex >= currentCaseData.stages.length - 1) {
             if (confirm('所有阶段已完成！确认结束本次推演并查看结果吗？')) {
-                // 【新增】在推演自然完成时保存团队分数
+                if (currentAmbientSound) {
+                    // console.log('[SOUND DEBUG] Natural drill end: Stopping sound.');
+                    currentAmbientSound.pause();
+                    currentAmbientSound = null;
+                }
                 if (currentCaseData && teamsData) {
                     localStorage.setItem('drillResults', JSON.stringify(teamsData));
-                    localStorage.setItem('currentCaseTitle', currentCaseData.title.replace(/\\/g, '').trim()); // 保存清理后的案例标题
+                    localStorage.setItem('currentCaseTitle', currentCaseData.title.replace(/\\/g, '').trim());
                     console.log('推演完成，团队分数已保存到localStorage:', teamsData);
                 }
-                if (forceEndBtn && forceEndBtn.href) { // forceEndBtn 通常就是结果页的链接
-                    window.location.href = forceEndBtn.href; // 使用已有的跳转逻辑
+                if (forceEndBtn && forceEndBtn.href) {
+                    window.location.href = forceEndBtn.href;
                 } else {
-                    window.location.href = `results.html?caseId=${caseId}`; // 备用跳转
+                    window.location.href = `results.html?caseId=${currentDrillCaseId}`;
                 }
             }
         } else {
@@ -801,17 +886,33 @@ document.addEventListener('DOMContentLoaded', async function () {
     if(pauseBtn) {
         pauseBtn.addEventListener('click', () => {
             isPaused = !isPaused;
+            if (socket && currentLobbyId && isTeacher) {
+                socket.emit('teacherPausesDrill', { lobbyId: currentLobbyId, isPaused: isPaused });
+            }
             if (pauseBtn) {
                 if (isPaused) {
-                    pauseBtn.innerHTML = '<i class="fas fa-play mr-2"></i>继续';
+                    // console.log('[SOUND DEBUG] Pause button: Pausing sound.', currentAmbientSound ? currentAmbientSound.src : 'No current sound');
+                    if (currentAmbientSound) currentAmbientSound.pause();
+                    pauseBtn.innerHTML = '<i class="fas fa-play mr-1 md:mr-2"></i>继续';
                     pauseBtn.classList.replace('bg-yellow-600', 'bg-green-600');
                     pauseBtn.classList.replace('hover:bg-yellow-700', 'hover:bg-green-700');
+                    if(timerElement) timerElement.classList.add('animate-pulse');
                 } else {
-                    pauseBtn.innerHTML = '<i class="fas fa-pause mr-2"></i>暂停';
+                    // console.log('[SOUND DEBUG] Pause button: Attempting to resume sound.', currentAmbientSound ? currentAmbientSound.src : 'No current sound');
+                    if (currentAmbientSound && currentDrillCaseId === '68332aee004ada38db5cfd38' && userInteracted) {
+                        currentAmbientSound.play().catch(error => console.error('[SOUND ERROR] Error resuming sound via pause button:', error)); // Adjusted prefix
+                    } else if (currentDrillCaseId === '68332aee004ada38db5cfd38' && userInteracted && !currentAmbientSound) {
+                        // console.log('[SOUND DEBUG] Pause button: No current sound, attempting to initialize for current stage.');
+                        playCaseBSound(currentStageIndex + 1);
+                    }
+                    pauseBtn.innerHTML = '<i class="fas fa-pause mr-1 md:mr-2"></i>暂停';
                     pauseBtn.classList.replace('bg-green-600', 'bg-yellow-600');
                     pauseBtn.classList.replace('hover:bg-green-700', 'hover:bg-yellow-700');
+                    if(timerElement) timerElement.classList.remove('animate-pulse');
                 }
             }
         });
     }
 });
+
+[end of emergency-drill-backend/js/drill.js]
