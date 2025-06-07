@@ -34,6 +34,18 @@
                 <div id="stage-timer" class="text-xl md:text-2xl font-mono font-bold text-yellow-400">00:00</div>
             </div>
             <div class="h-8 md:h-10 border-l border-gray-600"></div>
+            <!-- Inserted Volume Controls Here -->
+            <div id="volume-controls-container" class="flex items-center space-x-1 md:space-x-2 mr-2 md:mr-4">
+                <button id="volume-down-btn" title="降低音量" class="p-1 md:p-2 bg-sky-600 hover:bg-sky-700 rounded-md text-white text-xs md:text-sm">
+                    <i class="fas fa-volume-down"></i>
+                </button>
+                <button id="mute-btn" title="静音" class="p-1 md:p-2 bg-amber-600 hover:bg-amber-700 rounded-md text-white text-xs md:text-sm">
+                    <i class="fas fa-volume-mute"></i>
+                </button>
+                <button id="volume-up-btn" title="提高音量" class="p-1 md:p-2 bg-sky-600 hover:bg-sky-700 rounded-md text-white text-xs md:text-sm">
+                    <i class="fas fa-volume-up"></i>
+                </button>
+            </div>
             <div class="flex space-x-2 md:space-x-3">
                 <button id="pause-btn" class="px-3 py-1.5 md:px-4 md:py-2 text-sm md:text-base bg-yellow-600 hover:bg-yellow-700 rounded-md text-white font-semibold"><i class="fas fa-pause mr-1 md:mr-2"></i>暂停</button>
                 <a href="results.html" id="force-end-btn" class="px-3 py-1.5 md:px-4 md:py-2 text-sm md:text-base bg-red-600 hover:bg-red-700 rounded-md text-white font-semibold"><i class="fas fa-stop mr-1 md:mr-2"></i>强制结束</a>
