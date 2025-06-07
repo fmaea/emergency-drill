@@ -1,6 +1,8 @@
 // 文件路径: js/drill.js
 
 document.addEventListener('DOMContentLoaded', async function () {
+    console.log('[DRILL.JS ALIVE] DOMContentLoaded. Version: StudentSoundCheck2');
+
     // --- 1. DOM元素获取 ---
     const stagePanels = [
         document.getElementById('stage-1'),
@@ -59,18 +61,30 @@ document.addEventListener('DOMContentLoaded', async function () {
      let confirmedQuestions = {}; 
 
     // --- 3. 页面启动逻辑 ---
-    const urlParams = new URLSearchParams(window.location.search);
-    const caseIdFromUrl = urlParams.get('caseId'); 
+    console.log('[SOUND DIAGNOSTIC] Attempting to read URL parameters. Current window.location.search is:', window.location.search);
+    const urlString = window.location.search;
+    console.log('[SOUND DIAGNOSTIC] window.location.search is:', urlString);
 
-    if (!caseIdFromUrl) {
-        handleFatalError("错误：URL中未找到caseId，请从案例库进入。");
-        return;
+    if (!urlString || urlString === "" || urlString === "?") {
+        console.warn('[SOUND DIAGNOSTIC] URL query string is empty or contains no parameters. currentDrillCaseId might default.');
     }
+
+    const urlParams = new URLSearchParams(urlString);
+    const caseIdFromUrl = urlParams.get('caseId'); 
+    console.log('[SOUND DIAGNOSTIC] Value from params.get("caseId"):', caseIdFromUrl);
+    
+    if (!caseIdFromUrl) { 
+        handleFatalError("错误：URL中未找到caseId，请从案例库进入。");
+        return; 
+    }
+    
     currentDrillCaseId = caseIdFromUrl; 
-    // console.log('[SOUND DEBUG] currentDrillCaseId set to:', currentDrillCaseId); // Keep this one for initial check
+    console.log('[SOUND DIAGNOSTIC] Value assigned to currentDrillCaseId:', currentDrillCaseId);
+    console.log('[SOUND STARTUP] currentDrillCaseId available for rest of script:', currentDrillCaseId);
+
 
     try {
-        dbCaseId = caseIdFromUrl; 
+        dbCaseId = currentDrillCaseId; 
         currentStudentTeamId = localStorage.getItem('currentStudentTeamId');
         currentLobbyId = localStorage.getItem('currentLobbyId');
         
@@ -113,8 +127,25 @@ document.addEventListener('DOMContentLoaded', async function () {
         });
 
         socket.on('scoresUpdated', (updatedTeamsData) => {
-            console.log('[DRILL.JS] Received scoresUpdated event:', updatedTeamsData);
-            teamsData = updatedTeamsData; 
+            console.log('[SCORE DEBUG] Received scoresUpdated event. Data snapshot:', JSON.parse(JSON.stringify(updatedTeamsData)));
+            if (updatedTeamsData && Array.isArray(updatedTeamsData)) {
+                const newTeamsData = updatedTeamsData.map(serverTeam => {
+                    const localTeam = teamsData.find(lt => lt.id === serverTeam.id);
+                    if (localTeam && localTeam.stageScores && !serverTeam.stageScores) {
+                        console.log(`[SCORE DEBUG] scoresUpdated: Preserving local stageScores for team ${localTeam.name || localTeam.id} as server data did not provide them.`);
+                        serverTeam.stageScores = localTeam.stageScores;
+                    } else if (serverTeam.stageScores) {
+                        console.log(`[SCORE DEBUG] scoresUpdated: Using server-provided stageScores for team ${serverTeam.name || serverTeam.id}.`);
+                    } else if (currentCaseData && currentCaseData.stages) {
+                        serverTeam.stageScores = new Array(currentCaseData.stages.length).fill(0);
+                        console.log(`[SCORE DEBUG] scoresUpdated: Initializing stageScores for team ${serverTeam.name || serverTeam.id}.`);
+                    }
+                    return serverTeam;
+                });
+                teamsData = newTeamsData;
+            } else {
+                console.warn('[SCORE DEBUG] scoresUpdated: Received invalid updatedTeamsData structure.');
+            }
             updateLeaderboard(); 
         });
 
@@ -127,6 +158,16 @@ document.addEventListener('DOMContentLoaded', async function () {
             }
             if (data.finalTeamsData) {
                 teamsData = data.finalTeamsData;
+                if (currentCaseData && currentCaseData.stages && currentCaseData.stages.length > 0) {
+                     teamsData.forEach(team => {
+                        if (team.id && team.id !== 'placeholder' && team.id !== 'no-teams') {
+                            if (!team.stageScores || team.stageScores.length !== currentCaseData.stages.length) {
+                                console.log(`[SCORE DEBUG] Initializing/resetting stageScores for team ${team.name || team.id} from drillCompleted event.`);
+                                team.stageScores = new Array(currentCaseData.stages.length).fill(0);
+                            }
+                        }
+                    });
+                }
                 updateLeaderboard();
             }
             alert('本次推演已正式结束！点击“确定”查看最终结果。');
@@ -182,7 +223,7 @@ document.addEventListener('DOMContentLoaded', async function () {
         }
         if (teamsData.filter(t => t.id !== 'placeholder' && t.id !== 'no-teams').length === 0) { 
             if (!teamsData.find(t => t.id === 'teacher_ops_team')) { 
-                const teacherTeam = {id: 'teacher_ops_team', name: "教师演示", score: 0, answers: {}};
+                const teacherTeam = {id: 'teacher_ops_team', name: "教师演示", score: 0, answers: {}}; // stageScores will be added below
                 teamsData.push(teacherTeam);
                 if (!currentOperatingTeamId) currentOperatingTeamId = teacherTeam.id;
             }
@@ -193,6 +234,20 @@ document.addEventListener('DOMContentLoaded', async function () {
         if (!response.ok) throw new Error(`获取案例数据失败，状态: ${response.status}`);
         currentCaseData = await response.json();
         console.log('成功获取案例数据:', JSON.parse(JSON.stringify(currentCaseData)));
+
+        // Initialize stageScores for all teams after currentCaseData is loaded
+        if (currentCaseData && currentCaseData.stages && currentCaseData.stages.length > 0) {
+            teamsData.forEach(team => {
+                if (team.id && team.id !== 'placeholder' && team.id !== 'no-teams') { 
+                    if (!team.stageScores || team.stageScores.length !== currentCaseData.stages.length) {
+                        team.stageScores = new Array(currentCaseData.stages.length).fill(0);
+                        console.log(`[SCORE DEBUG] Initialized stageScores for team ${team.name || team.id} with length ${currentCaseData.stages.length}`);
+                    }
+                }
+            });
+        } else {
+            console.error("[SCORE DEBUG] Cannot initialize stageScores: currentCaseData or stages are not available when trying to init teamsData.");
+        }
         
         initializeDrillUI(currentCaseData);
 
@@ -280,7 +335,7 @@ document.addEventListener('DOMContentLoaded', async function () {
     // --- Volume Control Functions ---
     function initializeVolumeControls() {
         if (!volumeUpBtn || !volumeDownBtn || !muteBtn) {
-            console.warn('[SOUND WARN] Volume control buttons not all found.'); // Changed prefix
+            console.warn('[SOUND WARN] Volume control buttons not all found.'); 
             return;
         }
 
@@ -364,16 +419,16 @@ document.addEventListener('DOMContentLoaded', async function () {
                         // console.log('[SOUND DEBUG] audio.play() initiated for:', soundPath);
                     })
                     .catch(error => {
-                        console.error(`[SOUND ERROR] Play promise failed for stage ${stageNumber} (${soundPath}):`, error); // Keep and adjust
+                        console.error(`[SOUND ERROR] Play promise failed for stage ${stageNumber} (${soundPath}):`, error); 
                         if (error.name === 'NotAllowedError') {
-                            console.warn('[SOUND WARN] Playback prevented by browser policy. User interaction might be required again.'); // Keep and adjust
+                            console.warn('[SOUND WARN] Playback prevented by browser policy. User interaction might be required again.'); 
                             userInteracted = false; 
                             currentAmbientSound = null; 
                         }
                     });
             };
             currentAmbientSound.onerror = (e) => {
-                console.error(`[SOUND ERROR] Audio onerror for stage ${stageNumber} (${soundPath}). Code:`, currentAmbientSound.error ? currentAmbientSound.error.code : 'N/A', 'Message:', currentAmbientSound.error ? currentAmbientSound.error.message : 'N/A'); // Keep and adjust
+                console.error(`[SOUND ERROR] Audio onerror for stage ${stageNumber} (${soundPath}). Code:`, currentAmbientSound.error ? currentAmbientSound.error.code : 'N/A', 'Message:', currentAmbientSound.error ? currentAmbientSound.error.message : 'N/A'); 
                 currentAmbientSound = null; 
             };
             currentAmbientSound.load(); 
@@ -389,7 +444,7 @@ document.addEventListener('DOMContentLoaded', async function () {
             console.warn(`[渲染错误] 阶段 ${stageData ? stageData.stageNumber : '未知'}：缺少面板元素或阶段数据`);
             return;
         }
-        // console.log(`[渲染开始] 阶段 ${stageData.stageNumber}`, JSON.parse(JSON.stringify(stageData))); // Commented out
+        // console.log(`[渲染开始] 阶段 ${stageData.stageNumber}`, JSON.parse(JSON.stringify(stageData))); 
 
         const taskTitleElement = panelElement.querySelector('.stage-task-title');
         if (taskTitleElement) {
@@ -655,6 +710,7 @@ document.addEventListener('DOMContentLoaded', async function () {
     }
 
     function calculateScoresAndProceed() {
+        console.log(`[SCORE DEBUG] calculateScoresAndProceed CALLED. StageIndex: ${currentStageIndex}, OperatingTeamID: ${currentOperatingTeamId}`);
         const stageData = currentCaseData.stages[currentStageIndex];
         if (!stageData || !stageData.questions) {
             console.warn("无法计分：当前阶段数据或问题数据缺失。");
@@ -663,14 +719,20 @@ document.addEventListener('DOMContentLoaded', async function () {
         }
         teamsData.forEach(team => {
             if(team.id === 'placeholder' || team.id === 'no-teams') return; 
-            if (!currentOperatingTeamId || team.id !== currentOperatingTeamId) {
+            
+            if (!team.stageScores || team.stageScores.length !== currentCaseData.stages.length) {
+                 console.warn(`[SCORE DEBUG] Team ${team.name || team.id} missing or has malformed stageScores array in calculateScoresAndProceed. Initializing.`);
+                 team.stageScores = new Array(currentCaseData.stages.length).fill(0);
             }
-            let stageScoreForTeam = 0;
+
+            let stageScoreForTeam = 0; 
             stageData.questions.forEach((question, qIndex) => {
+                console.log(`[SCORE DEBUG] Processing Q${qIndex + 1}: "${question.questionText}". Points available: ${question.points || 0}. Correct answer defined: ${question.answerOptions ? question.answerOptions.some(opt => opt.isCorrect) : 'No options/correctness'}`);
                 const questionKey = `s${stageData.stageNumber}-q${qIndex}`;
                 const correctOptions = (question.answerOptions || [])
                                         .filter(opt => opt.isCorrect === true) 
                                         .map(opt => opt.text.replace(/"/g, '&quot;'));
+                
                 const teamAnswersForQuestion = team.answers && team.answers[questionKey] ? team.answers[questionKey] : [];
                 let isCorrectForThisQuestion = false;
                 if (correctOptions.length > 0) { 
@@ -686,8 +748,17 @@ document.addEventListener('DOMContentLoaded', async function () {
                     stageScoreForTeam += (question.points || 0);
                 }
             });
-            team.score += stageScoreForTeam;
+
+            if (team.stageScores && typeof currentStageIndex === 'number' && currentStageIndex < team.stageScores.length) {
+                team.stageScores[currentStageIndex] = stageScoreForTeam; 
+                console.log(`[SCORE DEBUG] Team ${team.name || team.id}, Stage ${currentStageIndex + 1} (index ${currentStageIndex}): actual stage score = ${stageScoreForTeam}. Stored in team.stageScores.`);
+            } else {
+                console.warn(`[SCORE DEBUG] Could not store stageScore for team ${team.name || team.id} at stageIndex ${currentStageIndex}. stageScores array or index invalid. StageScore was: ${stageScoreForTeam}`);
+            }
+            
+            team.score += stageScoreForTeam; 
             console.log(`团队 ${team.name} 在阶段 ${stageData.stageNumber} 获得 ${stageScoreForTeam} 分，总分: ${team.score}`);
+            
             stageData.questions.forEach((_, qIndex) => {
                 const questionKeyToClear = `s${stageData.stageNumber}-q${qIndex}`;
                 if (team.answers) { 
@@ -776,7 +847,7 @@ document.addEventListener('DOMContentLoaded', async function () {
                 return;
             }
             if (confirm(`确认提交问题 "${questionKey}" 的答案吗？一旦确认，将无法修改。`)) {
-                // console.log(`[DRILL.JS] Student confirmed answer for ${questionKey}:`, selectedAnswer); // Commented out
+                // console.log(`[DRILL.JS] Student confirmed answer for ${questionKey}:`, selectedAnswer); 
                 if (socket && currentStudentTeamId && currentLobbyId && dbCaseId) {
                     socket.emit('studentSubmitAnswer', {
                         lobbyId: currentLobbyId,
@@ -806,7 +877,7 @@ document.addEventListener('DOMContentLoaded', async function () {
                 }
             }
             if (isTeacher) {
-                // console.log('[DRILL.JS] Teacher clicked Next Stage/Complete Drill.'); // Commented out
+                // console.log('[DRILL.JS] Teacher clicked Next Stage/Complete Drill.'); 
                 if (currentStageIndex >= currentCaseData.stages.length - 1) {
                     if (confirm('所有阶段已完成！确认结束本次推演吗？教师将结束所有学生的推演。')) {
                         if (currentAmbientSound) { currentAmbientSound.pause(); currentAmbientSound = null; }
@@ -900,7 +971,7 @@ document.addEventListener('DOMContentLoaded', async function () {
                 } else {
                     // console.log('[SOUND DEBUG] Pause button: Attempting to resume sound.', currentAmbientSound ? currentAmbientSound.src : 'No current sound');
                     if (currentAmbientSound && currentDrillCaseId === '68332aee004ada38db5cfd38' && userInteracted) { 
-                        currentAmbientSound.play().catch(error => console.error('[SOUND ERROR] Error resuming sound via pause button:', error)); // Adjusted prefix
+                        currentAmbientSound.play().catch(error => console.error('[SOUND ERROR] Error resuming sound via pause button:', error)); 
                     } else if (currentDrillCaseId === '68332aee004ada38db5cfd38' && userInteracted && !currentAmbientSound) {
                         // console.log('[SOUND DEBUG] Pause button: No current sound, attempting to initialize for current stage.');
                         playCaseBSound(currentStageIndex + 1);
