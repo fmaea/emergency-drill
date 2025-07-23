@@ -156,20 +156,38 @@ document.addEventListener('DOMContentLoaded', async function () {
                 currentAmbientSound.pause();
                 currentAmbientSound = null;
             }
+
+            // Cache local teamsData which holds client-calculated stageScores
+            const localTeamsDataCache = teamsData.map(t => ({ ...t, stageScores: t.stageScores ? [...t.stageScores] : [] }));
+            // Ensure deep copy of stageScores if it exists
+            // const localTeamsDataCache = JSON.parse(JSON.stringify(teamsData)); // Alternative deep copy
+
             if (data.finalTeamsData) {
-                teamsData = data.finalTeamsData;
+                teamsData = data.finalTeamsData; // teamsData is now from server
+
+                // Iterate through server data and merge/preserve local stageScores
                 if (currentCaseData && currentCaseData.stages && currentCaseData.stages.length > 0) {
-                     teamsData.forEach(team => {
-                        if (team.id && team.id !== 'placeholder' && team.id !== 'no-teams') {
-                            if (!team.stageScores || team.stageScores.length !== currentCaseData.stages.length) {
-                                console.log(`[SCORE DEBUG] Initializing/resetting stageScores for team ${team.name || team.id} from drillCompleted event.`);
-                                team.stageScores = new Array(currentCaseData.stages.length).fill(0);
+                    teamsData.forEach(serverTeam => {
+                        if (serverTeam.id && serverTeam.id !== 'placeholder' && serverTeam.id !== 'no-teams') {
+                            const localTeamEquivalent = localTeamsDataCache.find(lt => lt.id === serverTeam.id);
+
+                            if (localTeamEquivalent && localTeamEquivalent.stageScores && localTeamEquivalent.stageScores.length === currentCaseData.stages.length) {
+                                // Local stageScores found and seem valid, prioritize them
+                                serverTeam.stageScores = localTeamEquivalent.stageScores;
+                                console.log(`[DRILL.JS] drillCompleted: Preserved local stageScores for team ${serverTeam.name || serverTeam.id}`);
+                            } else if (!serverTeam.stageScores || serverTeam.stageScores.length !== currentCaseData.stages.length) {
+                                // Initialize if server data is missing/malformed AND no valid local scores were found/merged
+                                console.log(`[DRILL.JS] drillCompleted: Initializing stageScores for team ${serverTeam.name || serverTeam.id} as server/local data was insufficient.`);
+                                serverTeam.stageScores = new Array(currentCaseData.stages.length).fill(0);
                             }
                         }
                     });
                 }
-                updateLeaderboard();
+                updateLeaderboard(); // Update leaderboard with potentially merged data
             }
+            // If server sends no finalTeamsData, the existing client-side teamsData (with its stageScores from localTeamsDataCache or previous state) is used.
+            // The localTeamsDataCache was made from teamsData, so if data.finalTeamsData is null, teamsData remains the version with local scores.
+            
             alert('本次推演已正式结束！点击“确定”查看最终结果。');
             localStorage.setItem('userRoleForResults', isTeacher ? 'teacher' : 'student');
             localStorage.setItem('drillResults', JSON.stringify(teamsData));
@@ -710,6 +728,7 @@ document.addEventListener('DOMContentLoaded', async function () {
     }
 
     function calculateScoresAndProceed() {
+        console.error("ENTERING calculateScoresAndProceed - MODIFIED VERSION - দেখুনঃJULES");
         console.log(`[SCORE DEBUG] calculateScoresAndProceed CALLED. StageIndex: ${currentStageIndex}, OperatingTeamID: ${currentOperatingTeamId}`);
         const stageData = currentCaseData.stages[currentStageIndex];
         if (!stageData || !stageData.questions) {
@@ -733,31 +752,56 @@ document.addEventListener('DOMContentLoaded', async function () {
                                         .filter(opt => opt.isCorrect === true) 
                                         .map(opt => opt.text.replace(/"/g, '&quot;'));
                 
-                const teamAnswersForQuestion = team.answers && team.answers[questionKey] ? team.answers[questionKey] : [];
+                let submittedAnswerData = []; // Default to empty array
+                if (team.answers && team.answers[questionKey] && team.answers[questionKey].submitted !== undefined) {
+                    // Ensure submitted is treated as an array for consistent .includes() and .length checks
+                    if (Array.isArray(team.answers[questionKey].submitted)) {
+                        submittedAnswerData = team.answers[questionKey].submitted;
+                    } else {
+                        // If not an array (e.g. single radio button string), wrap it in an array
+                        submittedAnswerData = [team.answers[questionKey].submitted];
+                    }
+                }
+                
+                // --- START DEBUG LOGS ---
+                console.log(`[DEBUG STAGE CALC] ---- Question: ${question.questionText} (Key: ${questionKey}) ----`);
+                console.log(`[DEBUG STAGE CALC] Correct Options:`, JSON.stringify(correctOptions));
+                console.log(`[DEBUG STAGE CALC] Team: ${team.name}, Answer object for this question (team.answers[questionKey]):`, JSON.stringify(team.answers[questionKey]));
+                console.log(`[DEBUG STAGE CALC] Derived submittedAnswerData:`, JSON.stringify(submittedAnswerData));
+                // --- END DEBUG LOGS ---
                 let isCorrectForThisQuestion = false;
-                if (correctOptions.length > 0) { 
+                // Ensure there's something to compare and correct options exist
+                if (correctOptions.length > 0 && submittedAnswerData.length > 0) { 
                     if (question.questionType === 'MultipleChoice-Multi') {
-                        isCorrectForThisQuestion = teamAnswersForQuestion.length === correctOptions.length && 
-                                               correctOptions.every(co => teamAnswersForQuestion.includes(co)) &&
-                                               teamAnswersForQuestion.every(ta => correctOptions.includes(ta));
-                    } else { 
-                        isCorrectForThisQuestion = teamAnswersForQuestion.length === 1 && correctOptions.includes(teamAnswersForQuestion[0]);
+                        isCorrectForThisQuestion = submittedAnswerData.length === correctOptions.length && 
+                                               correctOptions.every(co => submittedAnswerData.includes(co)) &&
+                                               submittedAnswerData.every(ta => correctOptions.includes(ta));
+                    } else { // Handles SingleChoice, Binary - expects submittedAnswerData to be an array with one element
+                        // Also ensure submittedAnswerData has exactly one element for single choice.
+                        isCorrectForThisQuestion = submittedAnswerData.length === 1 && correctOptions.includes(submittedAnswerData[0]);
                     }
                 }
                 if (isCorrectForThisQuestion) {
                     stageScoreForTeam += (question.points || 0);
                 }
+                // --- START DEBUG LOGS ---
+                console.log(`[DEBUG STAGE CALC] For Question Key ${questionKey} - isCorrectThisQuestion: ${isCorrectForThisQuestion}, Points Awarded this Q: ${isCorrectForThisQuestion ? (question.points || 0) : 0}`);
+                // --- END DEBUG LOGS ---
             });
 
+            // --- START DEBUG LOGS ---
+            console.log(`[DEBUG STAGE CALC] Team: ${team.name} - Calculated stageScoreForTeam for Stage ${currentStageIndex + 1}: ${stageScoreForTeam}`);
+            console.log(`[DEBUG STAGE CALC] Team: ${team.name} - team.stageScores array BEFORE update:`, JSON.stringify(team.stageScores));
+            // --- END DEBUG LOGS ---
             if (team.stageScores && typeof currentStageIndex === 'number' && currentStageIndex < team.stageScores.length) {
-                team.stageScores[currentStageIndex] = stageScoreForTeam; 
                 console.log(`[SCORE DEBUG] Team ${team.name || team.id}, Stage ${currentStageIndex + 1} (index ${currentStageIndex}): actual stage score = ${stageScoreForTeam}. Stored in team.stageScores.`);
+                team.stageScores[currentStageIndex] = stageScoreForTeam; 
             } else {
                 console.warn(`[SCORE DEBUG] Could not store stageScore for team ${team.name || team.id} at stageIndex ${currentStageIndex}. stageScores array or index invalid. StageScore was: ${stageScoreForTeam}`);
             }
             
-            team.score += stageScoreForTeam; 
-            console.log(`团队 ${team.name} 在阶段 ${stageData.stageNumber} 获得 ${stageScoreForTeam} 分，总分: ${team.score}`);
+            // team.score += stageScoreForTeam; // Total score is now managed by server
+            console.log(`团队 ${team.name} 在阶段 ${stageData.stageNumber} 获得 ${stageScoreForTeam} 分，总分: ${team.score}`); // Log current total score, even if not updated here
             
             stageData.questions.forEach((_, qIndex) => {
                 const questionKeyToClear = `s${stageData.stageNumber}-q${qIndex}`;
@@ -766,6 +810,9 @@ document.addEventListener('DOMContentLoaded', async function () {
                 }
             });
         });
+        // --- START DEBUG LOGS ---
+        console.log('[DEBUG STAGE CALC] Final teamsData after all stage score calculations in this run:', JSON.stringify(teamsData));
+        // --- END DEBUG LOGS ---
         updateLeaderboard();
         proceedToNextStageOrEnd();
     }
